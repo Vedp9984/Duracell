@@ -1,0 +1,269 @@
+{
+  "version": "1.0",
+  "name": "Flood DAS - GHMC Zone 12",
+  "description": "Layer-based flood monitoring system",
+  "groups": [
+    {
+      "id": "base",
+      "name": "Base Layers",
+      "icon": "layer-group",
+      "expanded": true,
+      "layers": [
+        {
+          "id": "watershed",
+          "name": "Watershed Boundary",
+          "file": "layers/watershed_boundary.geojson",
+          "type": "polygon",
+          "visible": true,
+          "style": {
+            "color": "#2980b9",
+            "weight": 3,
+            "fillColor": "#2980b9",
+            "fillOpacity": 0.1,
+            "dashArray": "10, 5"
+          },
+          "zIndex": 100
+        },
+        {
+          "id": "wards",
+          "name": "Ward Boundaries",
+          "file": "layers/ward_boundaries.geojson",
+          "type": "polygon",
+          "visible": true,
+          "style": {
+            "color": "#7f8c8d",
+            "weight": 1.5,
+            "fillColor": "#bdc3c7",
+            "fillOpacity": 0.05
+          },
+          "zIndex": 90
+        }
+      ]
+    },
+    {
+      "id": "hydrology",
+      "name": "Drainage Network",
+      "icon": "water",
+      "expanded": true,
+      "layers": [
+        {
+          "id": "subbasins",
+          "name": "Drainage Basins (Detailed)",
+          "file": "layers/drainage_basins_enriched.geojson",
+          "type": "polygon",
+          "visible": true,
+          "style": {
+            "color": "#8e44ad",
+            "weight": 2.5,
+            "fillColor": "#8e44ad",
+            "fillOpacity": 0.2
+          },
+          "zIndex": 160
+        },
+        {
+          "id": "channels_4",
+          "name": "Main Channels (Order 4)",
+          "file": "layers/drainage_order_4.geojson",
+          "type": "line",
+          "visible": true,
+          "style": {
+            "color": "#0066cc",
+            "weight": 5,
+            "opacity": 0.9
+          },
+          "zIndex": 200
+        },
+        {
+          "id": "channels_3",
+          "name": "Secondary Channels (Order 3)",
+          "file": "layers/drainage_order_3.geojson",
+          "type": "line",
+          "visible": true,
+          "style": {
+            "color": "#3399ff",
+            "weight": 3.5,
+            "opacity": 0.8
+          },
+          "zIndex": 190
+        },
+        {
+          "id": "channels_2",
+          "name": "Tertiary Channels (Order 2)",
+          "file": "layers/drainage_order_2.geojson",
+          "type": "line",
+          "visible": false,
+          "style": {
+            "color": "#66b3ff",
+            "weight": 2.5,
+            "opacity": 0.7
+          },
+          "zIndex": 180
+        },
+        {
+          "id": "channels_1",
+          "name": "Minor Tributaries (Order 1)",
+          "file": "layers/drainage_order_1.geojson",
+          "type": "line",
+          "visible": false,
+          "style": {
+            "color": "#99ccff",
+            "weight": 1.5,
+            "opacity": 0.6
+          },
+          "zIndex": 170
+        }
+      ]
+    },
+    {
+      "id": "risk",
+      "name": "Flood Risk Zones",
+      "icon": "exclamation-triangle",
+      "expanded": true,
+      "layers": [
+        {
+          "id": "risk_high",
+          "name": "High Risk Zones",
+          "file": "layers/flood_risk_high.geojson",
+          "type": "polygon",
+          "visible": true,
+          "style": {
+            "color": "#e74c3c",
+            "weight": 2,
+            "fillColor": "#e74c3c",
+            "fillOpacity": 0.4
+          },
+          "zIndex": 150
+        },
+        {
+          "id": "risk_medium",
+          "name": "Medium Risk Zones",
+          "file": "layers/flood_risk_medium.geojson",
+          "type": "polygon",
+          "visible": true,
+          "style": {
+            "color": "#f39c12",
+            "weight": 2,
+            "fillColor": "#f39c12",
+            "fillOpacity": 0.3
+          },
+          "zIndex": 140
+        },
+        {
+          "id": "risk_low",
+          "name": "Low Risk Zones",
+          "file": "layers/flood_risk_low.geojson",
+          "type": "polygon",
+          "visible": false,
+          "style": {
+            "color": "#27ae60",
+            "weight": 2,
+            "fillColor": "#27ae60",
+            "fillOpacity": 0.2
+          },
+          "zIndex": 130
+        }
+      ]
+    },
+    {
+      "id": "sensors",
+      "name": "Monitoring Infrastructure",
+      "icon": "broadcast-tower",
+      "expanded": true,
+      "layers": [
+        {
+          "id": "rain_gauges",
+          "name": "Rain Gauges",
+          "file": "layers/rain_gauges.geojson",
+          "type": "point",
+          "visible": true,
+          "style": {
+            "color": "#3498db",
+            "icon": "cloud-rain",
+            "size": 24
+          },
+          "zIndex": 300
+        },
+        {
+          "id": "water_levels",
+          "name": "Water Level Sensors",
+          "file": "layers/water_level_sensors.geojson",
+          "type": "point",
+          "visible": true,
+          "style": {
+            "color": "#9b59b6",
+            "icon": "water",
+            "size": 24
+          },
+          "zIndex": 290
+        }
+      ]
+    },
+    {
+      "id": "rasters",
+      "name": "Raster Data (DEM/DEM Derived)",
+      "icon": "mountain",
+      "expanded": true,
+      "layers": [
+        {
+          "id": "dem",
+          "name": "Digital Elevation Model",
+          "raster": "dem",
+          "type": "raster",
+          "visible": true,
+          "colormap": "terrain",
+          "zIndex": 5
+        },
+        {
+          "id": "strahler",
+          "name": "Strahler Stream Order",
+          "raster": "strahler",
+          "type": "raster",
+          "visible": false,
+          "colormap": "jet",
+          "zIndex": 6
+        },
+        {
+          "id": "basins",
+          "name": "Drainage Basins",
+          "raster": "basins",
+          "type": "raster",
+          "visible": false,
+          "colormap": "tab20",
+          "zIndex": 4
+        }
+      ]
+    }
+  ],
+  "basemaps": [
+    {
+      "id": "dark",
+      "name": "Dark",
+      "url": "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      "default": true
+    },
+    {
+      "id": "light",
+      "name": "Light",
+      "url": "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+    },
+    {
+      "id": "osm",
+      "name": "OpenStreetMap",
+      "url": "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+    },
+    {
+      "id": "satellite",
+      "name": "Satellite",
+      "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+    }
+  ],
+  "mapConfig": {
+    "center": [
+      17.4898,
+      78.434
+    ],
+    "zoom": 12,
+    "minZoom": 10,
+    "maxZoom": 18
+  }
+}

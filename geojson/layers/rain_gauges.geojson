@@ -1,0 +1,145 @@
+{
+  "type": "FeatureCollection",
+  "name": "Rain_Gauges",
+  "description": "Tipping bucket rain gauges - 0.2mm resolution",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "urn:ogc:def:crs:OGC:1.3:CRS84"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 1,
+        "name": "RG01_Kukatpally",
+        "sensor_type": "rain_gauge",
+        "location": "Kukatpally Bus Stand",
+        "elevation_m": 538,
+        "resolution_mm": 0.2,
+        "status": "active",
+        "style_icon": "cloud-rain",
+        "style_color": "#3498db",
+        "layer_type": "rain_gauge"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          78.408943,
+          17.504766
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 2,
+        "name": "RG02_KPHB",
+        "sensor_type": "rain_gauge",
+        "location": "KPHB Colony Phase 3",
+        "elevation_m": 542,
+        "resolution_mm": 0.2,
+        "status": "active",
+        "style_icon": "cloud-rain",
+        "style_color": "#3498db",
+        "layer_type": "rain_gauge"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          78.448943,
+          17.524766
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 3,
+        "name": "RG03_Miyapur",
+        "sensor_type": "rain_gauge",
+        "location": "Miyapur Metro Station",
+        "elevation_m": 556,
+        "resolution_mm": 0.2,
+        "status": "active",
+        "style_icon": "cloud-rain",
+        "style_color": "#3498db",
+        "layer_type": "rain_gauge"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          78.40068,
+          17.535832
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 4,
+        "name": "RG04_Moosapet",
+        "sensor_type": "rain_gauge",
+        "location": "Moosapet Circle",
+        "elevation_m": 535,
+        "resolution_mm": 0.2,
+        "status": "active",
+        "style_icon": "cloud-rain",
+        "style_color": "#3498db",
+        "layer_type": "rain_gauge"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          78.458943,
+          17.464766
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 5,
+        "name": "RG05_Balanagar",
+        "sensor_type": "rain_gauge",
+        "location": "Balanagar Industrial Area",
+        "elevation_m": 530,
+        "resolution_mm": 0.2,
+        "status": "active",
+        "style_icon": "cloud-rain",
+        "style_color": "#3498db",
+        "layer_type": "rain_gauge"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          78.39068,
+          17.443699
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 6,
+        "name": "RG06_Chintal",
+        "sensor_type": "rain_gauge",
+        "location": "Chintal Cross Roads",
+        "elevation_m": 548,
+        "resolution_mm": 0.2,
+        "status": "active",
+        "style_icon": "cloud-rain",
+        "style_color": "#3498db",
+        "layer_type": "rain_gauge"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          78.423943,
+          17.529766
+        ]
+      }
+    }
+  ]
+}

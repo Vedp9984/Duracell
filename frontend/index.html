@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flood DAS - GHMC Zone 12 Monitoring</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header class="dashboard-header">
+        <div class="header-left">
+            <i class="fas fa-water header-icon"></i>
+            <div class="header-title">
+                <h1>FLOOD DAS</h1>
+                <p>GHMC Zone 12 Flood Monitoring</p>
+            </div>
+        </div>
+        <div class="header-center">
+            <div class="location-info">
+                <i class="fas fa-map-marker-alt"></i>
+                <span>GHMC Zone 12 | Hyderabad</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="datetime">
+                <div class="date" id="current-date"></div>
+                <div class="time" id="current-time"></div>
+            </div>
+            <div class="connection-status" id="connection-status">
+                <i class="fas fa-circle"></i>
+                <span>Connecting...</span>
+            </div>
+        </div>
+    </header>
+
+    <div class="dashboard-container">
+        <!-- Left Panel - QGIS Layer Tree -->
+        <aside class="left-panel">
+            <div class="panel-section">
+                <div class="panel-header">
+                    <i class="fas fa-layer-group"></i>
+                    <span>LAYERS</span>
+                    <div class="panel-actions">
+                        <button class="panel-btn" id="btn-expand-all" title="Expand All"><i class="fas fa-expand-alt"></i></button>
+                        <button class="panel-btn" id="btn-collapse-all" title="Collapse All"><i class="fas fa-compress-alt"></i></button>
+                    </div>
+                </div>
+                <div class="layer-tree" id="layer-tree">
+                    <div class="loading-layers"><i class="fas fa-spinner fa-spin"></i> Loading layers...</div>
+                </div>
+            </div>
+            
+            <div class="panel-section">
+                <div class="panel-header collapsible expanded" data-target="basemap-content">
+                    <i class="fas fa-map"></i>
+                    <span>BASEMAP</span>
+                    <i class="fas fa-chevron-down toggle-icon"></i>
+                </div>
+                <div class="basemap-content" id="basemap-content"></div>
+            </div>
+            
+            <div class="panel-section">
+                <div class="panel-header collapsible expanded" data-target="legend-content">
+                    <i class="fas fa-palette"></i>
+                    <span>LEGEND</span>
+                    <i class="fas fa-chevron-down toggle-icon"></i>
+                </div>
+                <div class="legend-content" id="legend-content"></div>
+            </div>
+        </aside>
+
+        <!-- Center - Map -->
+        <main class="center-panel">
+            <div class="map-container">
+                <div id="map"></div>
+                <div class="map-toolbar">
+                    <button class="toolbar-btn" id="btn-zoom-fit" title="Fit Extent"><i class="fas fa-expand"></i></button>
+                    <button class="toolbar-btn" id="btn-zoom-in" title="Zoom In"><i class="fas fa-search-plus"></i></button>
+                    <button class="toolbar-btn" id="btn-zoom-out" title="Zoom Out"><i class="fas fa-search-minus"></i></button>
+                    <div class="toolbar-divider"></div>
+                    <button class="toolbar-btn active" id="btn-pan" title="Pan"><i class="fas fa-hand-paper"></i></button>
+                    <button class="toolbar-btn" id="btn-identify" title="Identify"><i class="fas fa-info-circle"></i></button>
+                </div>
+                <div class="map-info-bar">
+                    <div class="map-coords" id="map-coords"><i class="fas fa-crosshairs"></i> <span>Lat: --, Lon: --</span></div>
+                    <div class="map-scale" id="map-scale">Scale: 1:--</div>
+                    <div class="map-zoom" id="map-zoom">Zoom: --</div>
+                    <div class="map-crs">EPSG:4326</div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Right Panel - Status -->
+        <aside class="right-panel">
+            <div class="status-card risk-card normal" id="risk-card">
+                <div class="card-header"><i class="fas fa-exclamation-triangle"></i> FLOOD RISK</div>
+                <div class="card-body">
+                    <div class="risk-level" id="risk-level">NORMAL</div>
+                    <div class="risk-message" id="risk-message">All systems operational</div>
+                </div>
+            </div>
+            
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-icon rainfall"><i class="fas fa-cloud-rain"></i></div>
+                    <div class="metric-data">
+                        <div class="metric-value" id="rainfall-value">0.0</div>
+                        <div class="metric-label">Rainfall (mm/hr)</div>
+                    </div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-icon water"><i class="fas fa-water"></i></div>
+                    <div class="metric-data">
+                        <div class="metric-value" id="water-level-value">0.00</div>
+                        <div class="metric-label">Water Level (m)</div>
+                    </div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-icon discharge"><i class="fas fa-tachometer-alt"></i></div>
+                    <div class="metric-data">
+                        <div class="metric-value" id="discharge-value">0.0</div>
+                        <div class="metric-label">Discharge (m³/s)</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="info-card">
+                <div class="card-header"><i class="fas fa-info-circle"></i> CATCHMENT INFO</div>
+                <div class="info-grid">
+                    <div class="info-item"><span class="info-label">Area</span><span class="info-value">104.3 km²</span></div>
+                    <div class="info-item"><span class="info-label">Runoff</span><span class="info-value">0.736</span></div>
+                    <div class="info-item"><span class="info-label">Wards</span><span class="info-value">23</span></div>
+                    <div class="info-item"><span class="info-label">Channels</span><span class="info-value">153</span></div>
+                </div>
+            </div>
+
+            <div class="simulation-card">
+                <div class="card-header"><i class="fas fa-microscope"></i> SUBBASIN ANALYSIS</div>
+                <div class="card-body">
+                    <div id="simulation-results" class="simulation-results" style="display: none;">
+                        <div class="result-item">
+                            <span class="result-label">Basin:</span>
+                            <span class="result-value" id="selected-basin-id">-</span>
+                        </div>
+                        <div id="subbasin-details" class="subbasin-details">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                        <div class="result-item">
+                            <span class="result-label">Est. Peak Q:</span>
+                            <span class="result-value highlight" id="est-discharge-value">0.0 m³/s</span>
+                        </div>
+                        <div class="formula-hint">Q = C × i × A / 3.6 | Kirpich Tc</div>
+                    </div>
+                    <div id="no-selection-msg" class="no-selection-msg">
+                        <p><i class="fas fa-mouse-pointer"></i> Click a subbasin to simulate</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="alert-panel">
+                <div class="card-header"><i class="fas fa-bell"></i> ALERTS <span class="alert-badge" id="alert-count">0</span></div>
+                <div class="alert-list" id="alert-list">
+                    <div class="no-alerts"><i class="fas fa-check-circle"></i><p>No active alerts</p></div>
+                </div>
+            </div>
+            
+            <div class="chart-panel">
+                <div class="card-header"><i class="fas fa-chart-line"></i> TRENDS</div>
+                <div class="mini-charts">
+                    <div class="mini-chart"><canvas id="rainfall-chart"></canvas><span class="chart-label">Rainfall</span></div>
+                    <div class="mini-chart"><canvas id="water-level-chart"></canvas><span class="chart-label">Water Level</span></div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <footer class="dashboard-footer">
+        <div class="footer-left">Flood DAS v2.0 | Layer-Based System</div>
+        <div class="footer-center">GHMC Zone 12 | <span id="layer-count">0</span> layers | <span id="feature-count">0</span> features</div>
+        <div class="footer-right">Update: <span id="last-update">-</span></div>
+    </footer>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

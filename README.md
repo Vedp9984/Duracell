@@ -1,4 +1,4 @@
-# 🌊 Flood Data Acquisition System (DAS)
+
 
 **Smart City Urban Flood Monitoring System for Kukatpally Nala Sub-Catchment, Hyderabad**
 

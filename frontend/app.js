@@ -44,6 +44,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initWebSocket();
     startDataPolling();
     initSimulationListeners();
+    await initFloodSimulation();
 
     updateLayerCount();
     console.log('✓ Flood DAS - Ready');
@@ -771,7 +772,7 @@ function updateLayerCount() {
 }
 
 // ========================================
-// Simulation Logic
+// Subbasin Analysis (existing)
 // ========================================
 
 function initSimulationListeners() {
@@ -783,15 +784,356 @@ function updateSimulation() {
 
     const props = selectedSubbasin.feature.properties;
     const areaKm2 = props.Area_km2 || 0;
-    const C = 0.736; // Rational Method Runoff Coefficient
-
-    // Q = C * i * A
-    // i in m/s = intensity_mm_hr / (1000 * 3600)
-    // A in m2 = area_km2 * 1,000,000
-    // Q = C * (i/3600) * (A) / 1000
-    // Simplified: Q = (C * i * A) / 360
+    const C = 0.736;
     const intensity_mm_hr = currentIntensity;
-    const discharge = (C * intensity_mm_hr * areaKm2) / 3.6; // Correct conversion for m3/s
+    const discharge = (C * intensity_mm_hr * areaKm2) / 3.6;
 
     document.getElementById('est-discharge-value').textContent = `${discharge.toFixed(2)} m³/s`;
+}
+
+// ========================================
+// FLOOD SIMULATION PANEL
+// ========================================
+
+// Layer refs for simulation results
+const simLayers = {
+    riskZones:        null,   // dynamic ward risk zones
+    atRiskBuildings:  null,   // red building markers
+    safeBuildings:    null,   // green building markers
+    reliefCamps:      null,   // blue tent markers + circles
+    tempHospitals:    null,   // red cross markers + circles
+    communityKitchens:null,   // orange markers + circles
+};
+
+// Simulation preset values (match simulator.py patterns)
+const SIM_PRESETS = {
+    NORMAL:   { rainfall_mm: 10,  water_level_m: 0.8  },
+    MODERATE: { rainfall_mm: 30,  water_level_m: 1.5  },
+    HEAVY:    { rainfall_mm: 70,  water_level_m: 2.2  },
+    EXTREME:  { rainfall_mm: 150, water_level_m: 3.5  },
+};
+
+// Risk level → fill colour
+const RISK_COLORS = {
+    low:      '#27ae60',
+    medium:   '#f39c12',
+    high:     '#e74c3c',
+    critical: '#8e0000',
+};
+
+async function initFloodSimulation() {
+    // Populate ward dropdown
+    try {
+        const resp = await fetch(`${CONFIG.API_URL}/geojson/flood_zones.geojson`);
+        if (resp.ok) {
+            const geojson = await resp.json();
+            const select = document.getElementById('sim-area');
+            geojson.features.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f.properties.name;
+                opt.textContent = f.properties.name;
+                select.appendChild(opt);
+            });
+        }
+    } catch (e) { /* optional — ward list is nice-to-have */ }
+
+    // Slider live labels
+    const rainfallSlider = document.getElementById('sim-rainfall');
+    const wlSlider       = document.getElementById('sim-water-level');
+    rainfallSlider.addEventListener('input', () => {
+        document.getElementById('rainfall-badge').textContent = `${rainfallSlider.value} mm/hr`;
+    });
+    wlSlider.addEventListener('input', () => {
+        document.getElementById('wl-badge').textContent = `${parseFloat(wlSlider.value).toFixed(1)} m`;
+    });
+
+    // Preset buttons
+    document.querySelectorAll('.preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const p = SIM_PRESETS[btn.dataset.preset];
+            if (!p) return;
+            rainfallSlider.value = p.rainfall_mm;
+            wlSlider.value       = p.water_level_m;
+            rainfallSlider.dispatchEvent(new Event('input'));
+            wlSlider.dispatchEvent(new Event('input'));
+            document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        });
+    });
+
+    // Run button
+    document.getElementById('sim-run-btn').addEventListener('click', runFloodSimulation);
+
+    // Clear button
+    document.getElementById('sim-clear-btn').addEventListener('click', clearSimulationLayers);
+}
+
+async function runFloodSimulation() {
+    const rainfall    = parseFloat(document.getElementById('sim-rainfall').value) || 0;
+    const waterLevel  = parseFloat(document.getElementById('sim-water-level').value) || 0;
+    const area        = document.getElementById('sim-area').value;
+
+    // Show loading
+    document.getElementById('sim-loading').style.display = 'block';
+    document.getElementById('sim-results').style.display  = 'none';
+    document.getElementById('sim-run-btn').disabled       = true;
+
+    try {
+        const resp = await fetch(`${CONFIG.API_URL}/simulate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                rainfall_mm:   rainfall,
+                water_level_m: waterLevel,
+                area:          area,
+                k_relief:      5,
+                k_hospital:    3,
+                k_kitchen:     4,
+            }),
+        });
+
+        if (!resp.ok) {
+            console.error('Simulation API error', resp.status);
+            return;
+        }
+
+        const data = await resp.json();
+        renderSimulationResults(data);
+
+    } catch (err) {
+        console.error('Simulation failed:', err);
+    } finally {
+        document.getElementById('sim-loading').style.display = 'none';
+        document.getElementById('sim-run-btn').disabled       = false;
+    }
+}
+
+function renderSimulationResults(data) {
+    clearSimulationLayers();
+
+    const { risk_zones, buildings, facilities, summary } = data;
+
+    // 1 — Dynamic risk zone layer
+    if (risk_zones && risk_zones.features) {
+        simLayers.riskZones = L.geoJSON(risk_zones, {
+            style: feature => {
+                const level = feature.properties.risk_level || 'low';
+                const color = RISK_COLORS[level] || '#27ae60';
+                return {
+                    color:       color,
+                    weight:      2,
+                    fillColor:   color,
+                    fillOpacity: level === 'critical' ? 0.55 : level === 'high' ? 0.45 : level === 'medium' ? 0.3 : 0.15,
+                    opacity:     1,
+                };
+            },
+            onEachFeature: (feature, layer) => {
+                const p = feature.properties;
+                layer.bindPopup(`
+                    <div class="popup-title">${p.name || 'Ward'}</div>
+                    <div class="popup-row"><span class="popup-label">Risk Level:</span>
+                        <span class="popup-value" style="color:${RISK_COLORS[p.risk_level]};font-weight:bold">
+                            ${(p.risk_level || 'low').toUpperCase()}
+                        </span>
+                    </div>
+                    <div class="popup-row"><span class="popup-label">Risk Score:</span>
+                        <span class="popup-value">${p.risk_score?.toFixed(3) ?? '--'}</span></div>
+                    <div class="popup-row"><span class="popup-label">Est. Discharge:</span>
+                        <span class="popup-value">${p.dynamic_discharge_m3s?.toFixed(1) ?? '--'} m³/s</span></div>
+                    <div class="popup-row"><span class="popup-label">Population at Risk:</span>
+                        <span class="popup-value">${(p.population_at_risk || 0).toLocaleString()}</span></div>
+                    <div class="popup-row"><span class="popup-label">Flood Depth:</span>
+                        <span class="popup-value">${p.flood_depth_potential_m ?? '--'} m</span></div>
+                `);
+            }
+        }).addTo(map);
+    }
+
+    // 2 — Building layers
+    if (buildings && buildings.features) {
+        const atRisk = { type: 'FeatureCollection', features: buildings.features.filter(f => f.properties.status === 'at_risk') };
+        const safe   = { type: 'FeatureCollection', features: buildings.features.filter(f => f.properties.status === 'safe') };
+
+        simLayers.atRiskBuildings = L.geoJSON(atRisk, {
+            pointToLayer: (feature, latlng) => L.marker(latlng, { icon: buildingIcon(feature.properties.osm_type, 'at_risk') }),
+            onEachFeature: (feature, layer) => layer.bindPopup(buildingPopup(feature.properties, 'at_risk'))
+        }).addTo(map);
+
+        simLayers.safeBuildings = L.geoJSON(safe, {
+            pointToLayer: (feature, latlng) => L.marker(latlng, { icon: buildingIcon(feature.properties.osm_type, 'safe') }),
+            onEachFeature: (feature, layer) => layer.bindPopup(buildingPopup(feature.properties, 'safe'))
+        });
+        // Safe buildings are NOT added to map by default — user can toggle them on
+    }
+
+    // 3 — Facility layers
+    if (facilities) {
+        simLayers.reliefCamps        = renderFacilityLayer(facilities.relief_camps?.features       || [], 'relief_camp');
+        simLayers.tempHospitals      = renderFacilityLayer(facilities.temp_hospitals?.features     || [], 'temp_hospital');
+        simLayers.communityKitchens  = renderFacilityLayer(facilities.community_kitchens?.features || [], 'community_kitchen');
+    }
+
+    // 4 — Summary panel
+    if (summary) {
+        document.getElementById('stat-critical').textContent    = summary.wards_critical || 0;
+        document.getElementById('stat-high').textContent        = summary.wards_high || 0;
+        document.getElementById('stat-buildings').textContent   = summary.buildings_at_risk || 0;
+        const pop = summary.total_population_at_risk || 0;
+        document.getElementById('stat-population').textContent  = pop > 1000 ? `${(pop/1000).toFixed(1)}k` : pop;
+        document.getElementById('stat-relief').textContent      = summary.relief_camps_count || 0;
+        document.getElementById('stat-hospitals').textContent   = summary.temp_hospitals_count || 0;
+        document.getElementById('stat-kitchens').textContent    = summary.community_kitchens_count || 0;
+        document.getElementById('sim-results').style.display   = 'block';
+
+        // Wire layer toggle checkboxes
+        const toggleMap = [
+            { id: 'tog-risk-zones',  layerKey: 'riskZones'         },
+            { id: 'tog-at-risk',     layerKey: 'atRiskBuildings'    },
+            { id: 'tog-safe',        layerKey: 'safeBuildings'      },
+            { id: 'tog-relief',      layerKey: 'reliefCamps'        },
+            { id: 'tog-hospitals',   layerKey: 'tempHospitals'      },
+            { id: 'tog-kitchens',    layerKey: 'communityKitchens'  },
+        ];
+        toggleMap.forEach(({ id, layerKey }) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            // Sync initial checkbox state with actual layer presence on map
+            el.onchange = () => {
+                const layer = simLayers[layerKey];
+                if (!layer) return;
+                if (el.checked) map.addLayer(layer);
+                else            map.removeLayer(layer);
+            };
+        });
+    }
+}
+
+// ---- Facility layer renderer ----
+
+const FACILITY_STYLES = {
+    relief_camp:       { color: '#3498db', icon: 'fas fa-campground',    label: 'Relief Camp',        radius: 3.0 },
+    temp_hospital:     { color: '#e74c3c', icon: 'fas fa-hospital',      label: 'Temp. Hospital',     radius: 5.0 },
+    community_kitchen: { color: '#e67e22', icon: 'fas fa-utensils',      label: 'Community Kitchen',  radius: 2.0 },
+};
+
+function renderFacilityLayer(features, facilityType) {
+    if (!features.length) return null;
+
+    const style   = FACILITY_STYLES[facilityType];
+    const radiusPx = style.radius * 1000; // km → metres for Leaflet circle
+
+    const group = L.layerGroup();
+
+    features.forEach(feature => {
+        const p    = feature.properties;
+        const lat  = feature.geometry.coordinates[1];
+        const lon  = feature.geometry.coordinates[0];
+
+        // Coverage circle
+        L.circle([lat, lon], {
+            radius:      radiusPx,
+            color:       style.color,
+            fillColor:   style.color,
+            fillOpacity: 0.07,
+            weight:      1.5,
+            dashArray:   '6 4',
+        }).addTo(group);
+
+        // Marker
+        const icon = L.divIcon({
+            html: `<div class="facility-marker facility-marker--${facilityType}" style="background:${style.color}">
+                     <i class="${style.icon}"></i>
+                     <span class="facility-label">${style.label}</span>
+                   </div>`,
+            className: '',
+            iconSize:  [52, 52],
+            iconAnchor:[26, 26],
+        });
+
+        L.marker([lat, lon], { icon })
+            .bindPopup(`
+                <div class="popup-title">${p.name || 'Unnamed'}</div>
+                <div class="popup-row"><span class="popup-label">Role:</span>
+                    <span class="popup-value">${style.label}</span></div>
+                <div class="popup-row"><span class="popup-label">Type:</span>
+                    <span class="popup-value">${p.type_label || p.osm_type || '--'}</span></div>
+                <div class="popup-row"><span class="popup-label">Population Served:</span>
+                    <span class="popup-value">${(p.population_served || 0).toLocaleString()}</span></div>
+                <div class="popup-row"><span class="popup-label">Avg Distance:</span>
+                    <span class="popup-value">${p.avg_distance_km?.toFixed(2) ?? '--'} km</span></div>
+                <div class="popup-row"><span class="popup-label">Coverage Radius:</span>
+                    <span class="popup-value">${p.coverage_radius_km ?? '--'} km</span></div>
+                ${p.elevation_m ? `<div class="popup-row"><span class="popup-label">Elevation:</span>
+                    <span class="popup-value">${p.elevation_m.toFixed(0)} m</span></div>` : ''}
+            `)
+            .addTo(group);
+    });
+
+    group.addTo(map);
+    return group;
+}
+
+// ---- Building icon + popup helpers ----
+
+const BUILDING_ICONS = {
+    school:           'fas fa-school',
+    college:          'fas fa-university',
+    university:       'fas fa-university',
+    hospital:         'fas fa-hospital',
+    clinic:           'fas fa-clinic-medical',
+    community_centre: 'fas fa-building',
+    place_of_worship: 'fas fa-place-of-worship',
+    marketplace:      'fas fa-store',
+    fire_station:     'fas fa-fire-extinguisher',
+    police:           'fas fa-shield-alt',
+    stadium:          'fas fa-running',
+    sports_centre:    'fas fa-dumbbell',
+};
+
+function buildingIcon(osmType, status) {
+    const color    = status === 'at_risk' ? '#e74c3c' : '#27ae60';
+    const iconCls  = BUILDING_ICONS[osmType] || 'fas fa-map-marker-alt';
+    return L.divIcon({
+        html: `<div class="building-marker ${status}" style="border-color:${color}">
+                 <i class="${iconCls}" style="color:${color};font-size:11px"></i>
+               </div>`,
+        className: '',
+        iconSize:  [24, 24],
+        iconAnchor:[12, 12],
+    });
+}
+
+function buildingPopup(props, status) {
+    const statusLabel = status === 'at_risk'
+        ? '<span style="color:#e74c3c;font-weight:bold">⚠ AT RISK</span>'
+        : '<span style="color:#27ae60;font-weight:bold">✓ SAFE</span>';
+    return `
+        <div class="popup-title">${props.type_label || props.osm_type || 'Building'}</div>
+        <div class="popup-row"><span class="popup-label">Name:</span>
+            <span class="popup-value">${props.name || 'Unnamed'}</span></div>
+        <div class="popup-row"><span class="popup-label">Status:</span>
+            <span class="popup-value">${statusLabel}</span></div>
+        <div class="popup-row"><span class="popup-label">Ward:</span>
+            <span class="popup-value">${props.overlapping_ward || '--'}</span></div>
+        <div class="popup-row"><span class="popup-label">Ward Risk:</span>
+            <span class="popup-value">${(props.ward_risk_level || '--').toUpperCase()}</span></div>
+        ${props.elevation_m != null ? `<div class="popup-row"><span class="popup-label">Elevation:</span>
+            <span class="popup-value">${props.elevation_m.toFixed(0)} m</span></div>` : ''}
+        ${props.recommended_as ? `<div class="popup-row"><span class="popup-label">Recommended As:</span>
+            <span class="popup-value" style="color:#27ae60">${props.recommended_as.replace(/_/g,' ')}</span></div>` : ''}
+    `;
+}
+
+function clearSimulationLayers() {
+    Object.values(simLayers).forEach(layer => {
+        if (layer) map.removeLayer(layer);
+    });
+    Object.keys(simLayers).forEach(k => simLayers[k] = null);
+    document.getElementById('sim-results').style.display = 'none';
+    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+    // Reset toggles to defaults
+    ['tog-risk-zones','tog-at-risk','tog-relief','tog-hospitals','tog-kitchens'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.checked = true;
+    });
+    const safeTog = document.getElementById('tog-safe'); if (safeTog) safeTog.checked = false;
 }

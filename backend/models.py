@@ -116,6 +116,30 @@ class Alert(Base):
         return f"<Alert(type={self.alert_type}, severity={self.severity})>"
 
 
+class SimulationResult(Base):
+    """
+    Stores the most recent simulation run for session persistence.
+    Allows the frontend to reload the last simulation result on page refresh.
+    """
+    __tablename__ = "simulation_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    rainfall_mm = Column(Float, nullable=False)
+    water_level_m = Column(Float, nullable=False)
+    area_filter = Column(String(150), default="all")
+    k_relief = Column(Integer, default=5)
+    k_hospital = Column(Integer, default=3)
+    k_kitchen = Column(Integer, default=4)
+    risk_zones_json = Column(Text)      # serialized GeoJSON
+    buildings_json = Column(Text)       # serialized GeoJSON
+    facilities_json = Column(Text)      # serialized JSON
+    summary_json = Column(Text)         # serialized JSON
+    timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    def __repr__(self):
+        return f"<SimulationResult(rainfall={self.rainfall_mm}mm, wl={self.water_level_m}m)>"
+
+
 # Spatial layers storage (optional - for dynamic layer management)
 class SpatialLayer(Base):
     """

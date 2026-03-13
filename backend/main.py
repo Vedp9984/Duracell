@@ -36,8 +36,11 @@ from fastapi.responses import Response, FileResponse, JSONResponse
 
 # Local imports
 from .database import get_db, engine, Base, SessionLocal
-from .models import Rainfall, WaterLevel, DischargeEstimate, Alert
+from .models import Rainfall, WaterLevel, DischargeEstimate, Alert, SimulationResult
 from . import hydrology
+from . import risk_classification
+from . import osm_client
+from . import facility_optimization
 
 # ============================================================================
 # PYDANTIC SCHEMAS
@@ -187,11 +190,11 @@ async def startup_event():
     print("=" * 60)
     print("🌊 FLOOD DATA ACQUISITION SYSTEM - STARTING")
     print("=" * 60)
-    
+
     # Create tables
     Base.metadata.create_all(bind=engine)
     print("✓ Database tables initialized")
-    
+
     # Try to enable PostGIS
     try:
         db = SessionLocal()
@@ -201,7 +204,11 @@ async def startup_event():
         print("✓ PostGIS extension enabled")
     except Exception as e:
         print(f"⚠ PostGIS setup note: {e}")
-    
+
+    # Pre-compute static vulnerability scores and basin-ward mapping
+    risk_classification.initialize()
+    print("✓ Risk classification module initialized")
+
     print("=" * 60)
     print("🚀 System ready at http://localhost:8000")
     print("📊 API docs at http://localhost:8000/docs")
@@ -776,6 +783,234 @@ async def get_historical_data(
         "water_level": [{"timestamp": w.timestamp, "value": w.level_m} for w in water_level_data],
         "discharge": [{"timestamp": d.timestamp, "value": d.computed_discharge_m3s} for d in discharge_data]
     }
+
+
+# ============================================================================
+# SIMULATION PYDANTIC SCHEMAS
+# ============================================================================
+
+class SimulateRequest(BaseModel):
+    rainfall_mm: float = Field(..., ge=0, le=400, example=80.0, description="Rainfall intensity in mm/hr")
+    water_level_m: float = Field(..., ge=0, le=6, example=2.8, description="Water level at sensor in metres")
+    area: str = Field("all", example="all", description="'all' or a ward name e.g. 'Ward 100 Sanath Nagar'")
+    k_relief: int = Field(5, ge=1, le=15, description="Number of relief camps to recommend")
+    k_hospital: int = Field(3, ge=1, le=10, description="Number of temporary hospitals to recommend")
+    k_kitchen: int = Field(4, ge=1, le=15, description="Number of community kitchens to recommend")
+
+
+# ============================================================================
+# SIMULATION ENDPOINTS
+# ============================================================================
+
+@app.post("/simulate", tags=["Simulation"])
+async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)):
+    """
+    Master simulation endpoint.
+
+    Given rainfall intensity and water level, this endpoint:
+    1. Dynamically reclassifies all 23 Zone 12 wards into LOW/MEDIUM/HIGH/CRITICAL
+    2. Fetches (or serves cached) OSM buildings for the zone
+    3. Classifies each building as at-risk or safe
+    4. Runs greedy p-median optimization to recommend:
+       - K relief camp locations
+       - K temporary hospital locations
+       - K community kitchen locations
+    5. Persists the result to the database
+    6. Returns everything in a single response
+    """
+    # Step 1 — Risk zone classification
+    risk_zones = risk_classification.classify_wards(
+        request.rainfall_mm, request.water_level_m, request.area
+    )
+    ward_summary = risk_classification.get_ward_summary(risk_zones)
+
+    # Step 2 & 3 — OSM buildings fetch + classification
+    try:
+        buildings_raw = await osm_client.load_or_fetch_buildings()
+    except Exception as e:
+        print(f"[simulate] OSM fetch error: {e}")
+        buildings_raw = []
+
+    classified_buildings = osm_client.classify_buildings(buildings_raw, risk_zones)
+    buildings_geojson = osm_client.buildings_to_geojson(classified_buildings)
+
+    safe_buildings = [b for b in classified_buildings if b.get("status") == "safe"]
+    at_risk_count = len(classified_buildings) - len(safe_buildings)
+
+    # Step 4 — Facility optimization
+    try:
+        optimization_result = facility_optimization.optimize_all_facilities(
+            safe_buildings=safe_buildings,
+            risk_zones_geojson=risk_zones,
+            k_relief=request.k_relief,
+            k_hospital=request.k_hospital,
+            k_kitchen=request.k_kitchen,
+        )
+    except Exception as e:
+        print(f"[simulate] Optimization error: {e}")
+        optimization_result = {
+            "relief_camps": [], "temp_hospitals": [],
+            "community_kitchens": [], "coverage": {}
+        }
+
+    # Build coverage summary
+    coverage = optimization_result.get("coverage", {})
+    relief_cov = coverage.get("relief_camp", {}).get("_summary", {})
+    hosp_cov = coverage.get("temp_hospital", {}).get("_summary", {})
+    kitchen_cov = coverage.get("community_kitchen", {}).get("_summary", {})
+
+    summary = {
+        **ward_summary,
+        "buildings_at_risk": at_risk_count,
+        "buildings_safe": len(safe_buildings),
+        "relief_camps_count": len(optimization_result["relief_camps"]),
+        "temp_hospitals_count": len(optimization_result["temp_hospitals"]),
+        "community_kitchens_count": len(optimization_result["community_kitchens"]),
+        "coverage": {
+            "relief_camp_pct": relief_cov.get("coverage_pct", 0),
+            "temp_hospital_pct": hosp_cov.get("coverage_pct", 0),
+            "community_kitchen_pct": kitchen_cov.get("coverage_pct", 0),
+        }
+    }
+
+    # Convert facilities to GeoJSON
+    facilities_geojson = {
+        "relief_camps":       facility_optimization.facilities_to_geojson(optimization_result["relief_camps"]),
+        "temp_hospitals":     facility_optimization.facilities_to_geojson(optimization_result["temp_hospitals"]),
+        "community_kitchens": facility_optimization.facilities_to_geojson(optimization_result["community_kitchens"]),
+    }
+
+    # Step 5 — Persist to DB
+    try:
+        sim_record = SimulationResult(
+            rainfall_mm=request.rainfall_mm,
+            water_level_m=request.water_level_m,
+            area_filter=request.area,
+            k_relief=request.k_relief,
+            k_hospital=request.k_hospital,
+            k_kitchen=request.k_kitchen,
+            risk_zones_json=json.dumps(risk_zones),
+            buildings_json=json.dumps(buildings_geojson),
+            facilities_json=json.dumps(facilities_geojson),
+            summary_json=json.dumps(summary),
+        )
+        db.add(sim_record)
+        db.commit()
+    except Exception as e:
+        print(f"[simulate] DB persist error: {e}")
+
+    return {
+        "risk_zones": risk_zones,
+        "buildings": buildings_geojson,
+        "facilities": facilities_geojson,
+        "summary": summary,
+    }
+
+
+@app.get("/dynamic_risk_zones", tags=["Simulation"])
+async def get_dynamic_risk_zones(
+    rainfall_mm: float = 0.0,
+    water_level_m: float = 0.0,
+    area: str = "all"
+):
+    """
+    Return dynamically classified ward risk zones for given conditions.
+    Lightweight endpoint — no OSM fetch or optimization.
+    """
+    result = risk_classification.classify_wards(rainfall_mm, water_level_m, area)
+    return JSONResponse(content=result)
+
+
+@app.get("/osm_buildings", tags=["Simulation"])
+async def get_osm_buildings():
+    """
+    Return cached OSM buildings for Zone 12.
+    Triggers a fresh Overpass API fetch if cache is stale (>24h).
+    """
+    try:
+        buildings = await osm_client.load_or_fetch_buildings()
+        return osm_client.buildings_to_geojson(buildings)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OSM fetch failed: {str(e)}")
+
+
+@app.get("/candidate_sites", tags=["Simulation"])
+async def get_candidate_sites(facility_type: str = "relief_camp"):
+    """
+    Return safe OSM buildings eligible for a given facility type.
+    facility_type: relief_camp | temp_hospital | community_kitchen
+    """
+    valid_types = {"relief_camp", "temp_hospital", "community_kitchen"}
+    if facility_type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"facility_type must be one of {valid_types}")
+
+    try:
+        buildings = await osm_client.load_or_fetch_buildings()
+        # Use a neutral risk zone (all low) just to get safe buildings
+        base_zones = risk_classification.classify_wards(0, 0)
+        classified = osm_client.classify_buildings(buildings, base_zones)
+        candidates = facility_optimization.filter_candidates_by_type(classified, facility_type)
+        return osm_client.buildings_to_geojson(candidates)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/simulation/latest", tags=["Simulation"])
+async def get_latest_simulation(db: Session = Depends(get_db)):
+    """Return the most recent simulation result from the database."""
+    latest = db.query(SimulationResult).order_by(
+        desc(SimulationResult.timestamp)
+    ).first()
+
+    if not latest:
+        return JSONResponse(content={"message": "No simulation results yet"}, status_code=404)
+
+    return {
+        "id": latest.id,
+        "rainfall_mm": latest.rainfall_mm,
+        "water_level_m": latest.water_level_m,
+        "area_filter": latest.area_filter,
+        "timestamp": latest.timestamp.isoformat(),
+        "risk_zones": json.loads(latest.risk_zones_json) if latest.risk_zones_json else None,
+        "buildings": json.loads(latest.buildings_json) if latest.buildings_json else None,
+        "facilities": json.loads(latest.facilities_json) if latest.facilities_json else None,
+        "summary": json.loads(latest.summary_json) if latest.summary_json else None,
+    }
+
+
+@app.get("/simulation/presets", tags=["Simulation"])
+async def get_simulation_presets():
+    """Return preset simulation scenarios matching the simulator.py patterns."""
+    return [
+        {
+            "name": "NORMAL",
+            "label": "Normal Conditions",
+            "rainfall_mm": 10.0,
+            "water_level_m": 0.8,
+            "description": "Light intermittent rainfall — baseline monitoring"
+        },
+        {
+            "name": "MODERATE",
+            "label": "Moderate Rainfall",
+            "rainfall_mm": 30.0,
+            "water_level_m": 1.5,
+            "description": "Steady moderate rainfall — elevated vigilance"
+        },
+        {
+            "name": "HEAVY",
+            "label": "Heavy Rainfall",
+            "rainfall_mm": 70.0,
+            "water_level_m": 2.2,
+            "description": "Heavy rain event — prepare relief assets"
+        },
+        {
+            "name": "EXTREME",
+            "label": "Extreme Event (Oct 2020)",
+            "rainfall_mm": 150.0,
+            "water_level_m": 3.5,
+            "description": "Replicates 13 Oct 2020 Hyderabad flood — full emergency response"
+        },
+    ]
 
 
 # ============================================================================

@@ -37,6 +37,7 @@ python-multipart==0.0.6
 pyyaml==6.0.3
 rasterio==1.4.4
 six==1.17.0
+shapely==2.0.3
 sqlalchemy==2.0.25
 starlette==0.35.1
 typing-extensions==4.15.0

@@ -135,6 +135,120 @@
                 </div>
             </div>
 
+            <!-- Flood Simulation Panel -->
+            <div class="sim-panel" id="sim-panel">
+                <div class="card-header">
+                    <i class="fas fa-bolt"></i> FLOOD SIMULATION
+                </div>
+                <div class="sim-body">
+
+                    <!-- Area selector -->
+                    <div class="sim-field">
+                        <label class="sim-label">Area</label>
+                        <select id="sim-area" class="sim-select">
+                            <option value="all">All Zone 12</option>
+                        </select>
+                    </div>
+
+                    <!-- Preset buttons -->
+                    <div class="sim-presets">
+                        <button class="preset-btn" data-preset="NORMAL">NORMAL</button>
+                        <button class="preset-btn" data-preset="MODERATE">MODERATE</button>
+                        <button class="preset-btn" data-preset="HEAVY">HEAVY</button>
+                        <button class="preset-btn preset-extreme" data-preset="EXTREME">EXTREME</button>
+                    </div>
+
+                    <!-- Rainfall slider -->
+                    <div class="sim-field">
+                        <label class="sim-label">
+                            Rainfall Intensity
+                            <span class="sim-value-badge" id="rainfall-badge">0 mm/hr</span>
+                        </label>
+                        <input type="range" id="sim-rainfall" class="sim-slider" min="0" max="200" step="1" value="0">
+                        <div class="sim-slider-labels">
+                            <span>0</span><span>50</span><span>100</span><span>150</span><span>200</span>
+                        </div>
+                    </div>
+
+                    <!-- Water level slider -->
+                    <div class="sim-field">
+                        <label class="sim-label">
+                            Water Level
+                            <span class="sim-value-badge" id="wl-badge">0.0 m</span>
+                        </label>
+                        <input type="range" id="sim-water-level" class="sim-slider" min="0" max="4" step="0.1" value="0">
+                        <div class="sim-slider-labels">
+                            <span>0m</span><span>1m</span><span>2m</span><span>3m</span><span>4m</span>
+                        </div>
+                    </div>
+
+                    <!-- Run button -->
+                    <button class="sim-run-btn" id="sim-run-btn">
+                        <i class="fas fa-play"></i> Run Simulation
+                    </button>
+
+                    <!-- Results summary (hidden until simulation runs) -->
+                    <div id="sim-results" class="sim-results" style="display:none;">
+                        <div class="sim-results-title">Simulation Results</div>
+
+                        <div class="sim-stats-grid">
+                            <div class="sim-stat critical-stat">
+                                <div class="sim-stat-value" id="stat-critical">0</div>
+                                <div class="sim-stat-label">Critical Wards</div>
+                            </div>
+                            <div class="sim-stat high-stat">
+                                <div class="sim-stat-value" id="stat-high">0</div>
+                                <div class="sim-stat-label">High Risk</div>
+                            </div>
+                            <div class="sim-stat">
+                                <div class="sim-stat-value" id="stat-buildings">0</div>
+                                <div class="sim-stat-label">Bldgs at Risk</div>
+                            </div>
+                            <div class="sim-stat">
+                                <div class="sim-stat-value" id="stat-population">0</div>
+                                <div class="sim-stat-label">Pop. at Risk</div>
+                            </div>
+                        </div>
+
+                        <div class="sim-facilities-summary">
+                            <div class="fac-summary-item">
+                                <span class="fac-icon relief">&#9978;</span>
+                                <span id="stat-relief">0</span> Relief Camps
+                            </div>
+                            <div class="fac-summary-item">
+                                <span class="fac-icon hospital">&#10010;</span>
+                                <span id="stat-hospitals">0</span> Temp Hospitals
+                            </div>
+                            <div class="fac-summary-item">
+                                <span class="fac-icon kitchen">&#127859;</span>
+                                <span id="stat-kitchens">0</span> Comm. Kitchens
+                            </div>
+                        </div>
+
+                        <div class="sim-layer-toggles">
+                            <div class="toggle-title">Toggle Layers</div>
+                            <label class="toggle-row"><input type="checkbox" id="tog-risk-zones" checked> <span>Risk Zones</span></label>
+                            <label class="toggle-row"><input type="checkbox" id="tog-at-risk" checked> <span>At-Risk Buildings</span></label>
+                            <label class="toggle-row"><input type="checkbox" id="tog-safe"> <span>Safe Buildings</span></label>
+                            <label class="toggle-row"><input type="checkbox" id="tog-relief" checked> <span>Relief Camps</span></label>
+                            <label class="toggle-row"><input type="checkbox" id="tog-hospitals" checked> <span>Temp Hospitals</span></label>
+                            <label class="toggle-row"><input type="checkbox" id="tog-kitchens" checked> <span>Community Kitchens</span></label>
+                        </div>
+
+                        <button class="sim-clear-btn" id="sim-clear-btn">
+                            <i class="fas fa-times"></i> Clear Results
+                        </button>
+                    </div>
+
+                    <!-- Loading indicator -->
+                    <div id="sim-loading" class="sim-loading" style="display:none;">
+                        <i class="fas fa-spinner fa-spin"></i> Running simulation...
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- Subbasin Analysis Panel (existing, kept below) -->
             <div class="simulation-card">
                 <div class="card-header"><i class="fas fa-microscope"></i> SUBBASIN ANALYSIS</div>
                 <div class="card-body">

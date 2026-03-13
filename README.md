@@ -98,87 +98,60 @@ flood_das/
 
 ---
 
-## 🚀 Quick Start
+### Core Components
+- **Spatial Processing (`extract_gpkg.py`, `create_layers.py`, `process_basins.py`)**: Python utilities that process raw QGIS `.gpkg` and shapefiles. They strip 3D geometries, apply CRS transformations (to `EPSG:4326`), enrich them with historical flood data/characteristics, and output static `.geojson` layer structures into the `geojson/` folder.
+- **Backend API (`backend/main.py`)**: A FastAPI application providing REST endpoints for real-time sensor metrics injection and fetching. Calculates discharge thresholds via the Rational Method. Provides a WebSocket (`/ws`) implementation that pushes live data and alerts to connected UI clients.
+- **Simulation Engine (`backend/simulator.py`)**: Background script to iteratively ping the REST endpoints with faked precipitation / water stage events to load-test the application and trigger threshold alerts on the UI.
+- **Frontend SPA (`create_frontend.py`, `frontend/`)**: Generates an HTML/JS/CSS single-page application wrapping `Leaflet.js` and `Chart.js`. The UI pulls generated GeoJSONs locally, plots risk maps and hydrological matrices on a canvas, listens to the WebSocket for live events, and renders notifications.
+
+### Data Storage
+The backend uses SQLAlchemy. While built for PostGIS, the default configuration falls back directly to an embedded SQLite database (`flood_das.db`) storing sensor telemetry, discharge estimates, alerts, and feature geometries as generic WKT format text.
+
+---
+
+## 🚀 How to Run locally
 
 ### Prerequisites
-
 - Python 3.9+
-- PostgreSQL 12+ with PostGIS extension
-- Modern web browser
 
-### 1. Clone and Setup
+### 1. Clone and Setup Environment
 
 ```bash
-# Navigate to project directory
+git clone <repository_url>
 cd flood_das
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# OR
-venv\Scripts\activate     # Windows
-
-# Install dependencies
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Database Setup
+### 2. Start the Backend API
 
-```sql
--- Connect to PostgreSQL and create database
-CREATE DATABASE flood_das;
-
--- Connect to flood_das and enable PostGIS
-\c flood_das
-CREATE EXTENSION postgis;
-```
-
-Update `backend/database.py` with your database credentials if needed:
-
-```python
-DATABASE_URL = "postgresql://username:password@localhost:5432/flood_das"
-```
-
-### 3. Start the Backend
+The system automatically initializes an SQLite database fallback out-of-the-box (`flood_das.db`).
 
 ```bash
-# From flood_das directory
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+source .venv/bin/activate
+uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
+- API Docs: `http://localhost:8000/docs`
+- UI Dashboard: **Automatically served at `http://localhost:8000`**
 
-API will be available at: `http://localhost:8000`
-API Documentation: `http://localhost:8000/docs`
+### 3. Run Sensor Simulation (Separate Terminal)
 
-### 4. Open the Dashboard
+To load-test the application and see the dashboard react, we use a simulation script. This script acts as virtual weather/water sensors, programmatically firing HTTP POST requests via the `aiohttp` library to the Backend's `/add_rainfall` and `/add_water_level` endpoints.
 
-Simply open `frontend/index.html` in your web browser, or serve it:
+This simulates:
+1. **Rainfall Events**: Ramping up rainfall intensity (mm/hr) in synthetic rain gauges. 
+2. **Rising Water Levels**: Simulating Nala stream stages rising linearly or exponentially depending on the profile.
+3. **Triggering the Rules Engine**: Driving the hydrological equations (Rational Method) past safe thresholds to automatically trigger WebSockets Alerts, which the UI receives and turns into red "Critical Risk" visual warnings.
 
 ```bash
-# Serve frontend (optional)
-cd frontend
-python -m http.server 3000
-```
-
-Dashboard will be at: `http://localhost:3000`
-
-### 5. Run Sensor Simulation
-
-```bash
-# In a new terminal
-cd flood_das
-source venv/bin/activate
-
-# Run default simulation (heavy rainfall)
+source .venv/bin/activate
+# Standard run (gradual rain buildup)
 python -m backend.simulator
-
-# Run extreme event simulation
+# Extreme storm burst scenario (fast flash flood simulation)
 python -m backend.simulator --pattern extreme --duration 15
-
-# Quick demo - single extreme event
-python -m backend.simulator --extreme
 ```
-
----
 
 ## 💧 Hydrological Logic
 

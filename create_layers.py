@@ -482,42 +482,6 @@ def create_layer_config():
                         "zIndex": 290
                     }
                 ]
-            },
-            {
-                "id": "rasters",
-                "name": "Raster Data (DEM/DEM Derived)",
-                "icon": "mountain",
-                "expanded": True,
-                "layers": [
-                    {
-                        "id": "dem",
-                        "name": "Digital Elevation Model",
-                        "raster": "dem",
-                        "type": "raster",
-                        "visible": True,
-                        "colormap": "terrain",
-                        "zIndex": 5
-                    },
-                    {
-                        "id": "strahler",
-                        "name": "Strahler Stream Order",
-                        "raster": "strahler",
-                        "type": "raster",
-                        "visible": False,
-                        "colormap": "jet",
-                        "zIndex": 6
-                    },
-                    {
-                        "id": "basins",
-                        "name": "Drainage Basins",
-                        "raster": "basins",
-                        "type": "raster",
-                        "visible": False,
-                        "colormap": "tab20",
-                        "zIndex": 4
-                    }
-                ]
-            }
         ],
         "basemaps": [
             {"id": "dark", "name": "Dark", "url": "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", "default": True},

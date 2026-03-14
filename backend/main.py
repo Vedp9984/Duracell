@@ -831,6 +831,11 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
         print(f"[simulate] OSM fetch error: {e}")
         buildings_raw = []
 
+    # Ward-focus mode: restrict buildings to selected ward geometry.
+    # Only apply when classification actually returned a single ward.
+    if len(risk_zones.get("features", [])) == 1:
+        buildings_raw = osm_client.filter_buildings_to_risk_zones(buildings_raw, risk_zones)
+
     classified_buildings = osm_client.classify_buildings(buildings_raw, risk_zones)
     buildings_geojson = osm_client.buildings_to_geojson(classified_buildings)
 

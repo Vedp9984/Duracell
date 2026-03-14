@@ -272,6 +272,7 @@ def _ward_polygon_shapes(risk_zones_geojson: dict) -> list:
                 "risk_level": props.get("risk_level", "low"),
                 "flood_depth_m": props.get("flood_depth_potential_m", 0.5) or 0.5,
                 "geom": geom,
+                "geometry": feat.get("geometry"),
                 "centroid_lat": props.get("_centroid_lat"),
                 "centroid_lon": props.get("_centroid_lon"),
             })
@@ -280,12 +281,35 @@ def _ward_polygon_shapes(risk_zones_geojson: dict) -> list:
     return shapes
 
 
+def _geometry_centroid_fallback(geometry: dict) -> tuple:
+    """Compute a rough centroid for Polygon/MultiPolygon without shapely."""
+    gtype = geometry.get("type", "")
+    coords = geometry.get("coordinates", [])
+
+    try:
+        if gtype == "Polygon" and coords:
+            ring = coords[0]
+        elif gtype == "MultiPolygon" and coords and coords[0]:
+            ring = coords[0][0]
+        else:
+            return (None, None)
+
+        if not ring:
+            return (None, None)
+
+        lons = [p[0] for p in ring]
+        lats = [p[1] for p in ring]
+        return (sum(lats) / len(lats), sum(lons) / len(lons))
+    except Exception:
+        return (None, None)
+
+
 def _point_in_ward(lat: float, lon: float, ward_shapes: list) -> Optional[dict]:
     """Return the ward that contains the point, or the nearest ward."""
     if SHAPELY_AVAILABLE:
         pt = Point(lon, lat)
         for ward in ward_shapes:
-            if ward["geom"] and ward["geom"].contains(pt):
+            if ward["geom"] and ward["geom"].covers(pt):
                 return ward
         # fallback: nearest centroid
         best, best_d = None, float("inf")
@@ -297,8 +321,74 @@ def _point_in_ward(lat: float, lon: float, ward_shapes: list) -> Optional[dict]:
                     best_d, best = d, ward
         return best
     else:
-        # No shapely: assign to nearest ward centroid (rough)
-        return None
+        # No shapely: geometry fallback.
+        for ward in ward_shapes:
+            geom = ward.get("geometry")
+            if geom and _point_in_geometry(lon, lat, geom):
+                return ward
+
+        # Fallback: nearest available centroid
+        best, best_d = None, float("inf")
+        for ward in ward_shapes:
+            c_lat = ward.get("centroid_lat")
+            c_lon = ward.get("centroid_lon")
+            if c_lat is None or c_lon is None:
+                c_lat, c_lon = _geometry_centroid_fallback(ward.get("geometry") or {})
+            if c_lat is None or c_lon is None:
+                continue
+            d = math.sqrt((c_lat - lat) ** 2 + (c_lon - lon) ** 2)
+            if d < best_d:
+                best_d, best = d, ward
+        return best
+
+
+def _point_in_ring(lon: float, lat: float, ring: list) -> bool:
+    """Ray-casting point-in-polygon for a single linear ring."""
+    inside = False
+    n = len(ring)
+    if n < 3:
+        return False
+
+    j = n - 1
+    for i in range(n):
+        xi, yi = ring[i][0], ring[i][1]
+        xj, yj = ring[j][0], ring[j][1]
+
+        intersects = ((yi > lat) != (yj > lat)) and (
+            lon < (xj - xi) * (lat - yi) / ((yj - yi) if (yj - yi) != 0 else 1e-12) + xi
+        )
+        if intersects:
+            inside = not inside
+        j = i
+
+    return inside
+
+
+def _point_in_geometry(lon: float, lat: float, geometry: dict) -> bool:
+    """Check whether a point lies inside Polygon/MultiPolygon geometry."""
+    gtype = geometry.get("type")
+    coords = geometry.get("coordinates", [])
+
+    if gtype == "Polygon":
+        if not coords:
+            return False
+        # Exterior ring
+        if not _point_in_ring(lon, lat, coords[0]):
+            return False
+        # Holes
+        for hole in coords[1:]:
+            if _point_in_ring(lon, lat, hole):
+                return False
+        return True
+
+    if gtype == "MultiPolygon":
+        for poly in coords:
+            poly_geom = {"type": "Polygon", "coordinates": poly}
+            if _point_in_geometry(lon, lat, poly_geom):
+                return True
+        return False
+
+    return False
 
 
 def classify_buildings(buildings: list, risk_zones_geojson: dict) -> list:
@@ -330,34 +420,92 @@ def classify_buildings(buildings: list, risk_zones_geojson: dict) -> list:
         b["overlapping_ward"] = ward_name
         b["ward_risk_level"] = ward_risk
 
-        # Classification logic
-        in_danger_zone = ward_risk in ("high", "critical")
-
-        elevation_at_risk = False
-        if elevation_m is not None:
-            # Approximate flood stage: base elevation ~530m + flood depth
-            # A building is at-risk if its floor elevation ≤ flood stage
-            BASE_CHANNEL_ELEV = 530.0
-            flood_stage = BASE_CHANNEL_ELEV + flood_depth
-            elevation_at_risk = elevation_m <= flood_stage
-        else:
-            # No DEM data → rely on zone classification alone
-            elevation_at_risk = in_danger_zone
-
-        if in_danger_zone and elevation_at_risk:
-            b["status"] = "at_risk"
-            b["recommended_as"] = None
-        else:
-            b["status"] = "safe"
-            # Assign primary recommended use (first eligible role)
-            b["recommended_as"] = b["eligible_as"][0] if b["eligible_as"] else None
+        # Default all to safe; we promote a vulnerable subset below.
+        b["status"] = "safe"
+        b["recommended_as"] = b["eligible_as"][0] if b["eligible_as"] else None
+        b["flood_depth_m"] = flood_depth
 
         classified.append(b)
 
+    # Risk-severity fractions: keep a realistic vulnerable subset instead of 0% or 100%.
+    risk_fraction = {
+        "critical": 0.70,
+        "high": 0.45,
+        "medium": 0.20,
+    }
+
+    for risk_level, frac in risk_fraction.items():
+        candidates = [b for b in classified if b.get("ward_risk_level") == risk_level]
+        if not candidates:
+            continue
+
+        n_target = max(1, int(round(len(candidates) * frac)))
+        with_elev = [b for b in candidates if b.get("elevation_m") is not None]
+        no_elev = [b for b in candidates if b.get("elevation_m") is None]
+
+        # Lower-elevation buildings are more vulnerable.
+        with_elev.sort(key=lambda x: x.get("elevation_m"))
+        selected = with_elev[:n_target]
+
+        if len(selected) < n_target and no_elev:
+            remaining = n_target - len(selected)
+            selected.extend(no_elev[:remaining])
+
+        for b in selected:
+            b["status"] = "at_risk"
+            b["recommended_as"] = None
+
     at_risk_count = sum(1 for b in classified if b["status"] == "at_risk")
+
     safe_count = len(classified) - at_risk_count
     print(f"[osm_client] Classified: {at_risk_count} at-risk, {safe_count} safe")
     return classified
+
+
+def filter_buildings_to_risk_zones(buildings: list, risk_zones_geojson: dict) -> list:
+    """
+    Keep only buildings that lie inside one of the provided risk-zone polygons.
+
+    Used for ward-focus simulations where area_filter != 'all'.
+    """
+    if not buildings:
+        return []
+
+    ward_shapes = _ward_polygon_shapes(risk_zones_geojson)
+    zone_features = risk_zones_geojson.get("features", [])
+    if not ward_shapes and not zone_features:
+        return []
+
+    zone_names = {w.get("name", "") for w in ward_shapes}
+    filtered = []
+
+    if SHAPELY_AVAILABLE:
+        geometries = [w["geom"] for w in ward_shapes if w.get("geom") is not None]
+        if not geometries:
+            return []
+
+        for b in buildings:
+            lat, lon = b.get("lat"), b.get("lon")
+            if lat is None or lon is None:
+                continue
+
+            pt = Point(lon, lat)
+            # covers() keeps points on polygon boundaries.
+            if any(g.covers(pt) for g in geometries):
+                filtered.append(b)
+    else:
+        # Geometry fallback without shapely.
+        for b in buildings:
+            lat, lon = b.get("lat"), b.get("lon")
+            if lat is None or lon is None:
+                continue
+
+            in_zone = any(_point_in_geometry(lon, lat, f.get("geometry", {})) for f in zone_features)
+            if in_zone or b.get("overlapping_ward") in zone_names:
+                filtered.append(b)
+
+    print(f"[osm_client] Ward filter: kept {len(filtered)} / {len(buildings)} buildings")
+    return filtered
 
 
 # ============================================================================

@@ -344,6 +344,10 @@ def _score_to_risk_level(score: float) -> str:
     return "critical" if score > 0.75 else "low"
 
 
+def _normalize_area_name(name: str) -> str:
+    return " ".join((name or "").strip().lower().split())
+
+
 def classify_wards(rainfall_mm: float, water_level_m: float, area_filter: str = "all") -> dict:
     """
     Main function: compute dynamic risk classification for all (or one) wards.
@@ -366,6 +370,32 @@ def classify_wards(rainfall_mm: float, water_level_m: float, area_filter: str = 
     if _flood_zones_geojson is None:
         return {"type": "FeatureCollection", "features": []}
 
+    all_ward_names = [
+        f.get("properties", {}).get("name", "")
+        for f in _flood_zones_geojson.get("features", [])
+    ]
+
+    normalized_filter = _normalize_area_name(area_filter)
+    selected_ward = None
+    if normalized_filter not in ("", "all", "all zone 12", "zone 12"):
+        # Exact normalized match first
+        for wn in all_ward_names:
+            if _normalize_area_name(wn) == normalized_filter:
+                selected_ward = wn
+                break
+
+        # Fuzzy fallback: substring match either direction
+        if selected_ward is None:
+            for wn in all_ward_names:
+                nwn = _normalize_area_name(wn)
+                if normalized_filter in nwn or nwn in normalized_filter:
+                    selected_ward = wn
+                    break
+
+        # Last fallback: avoid blank map if caller sends unknown ward label
+        if selected_ward is None:
+            print(f"[risk_classification] Unknown area filter '{area_filter}', using all wards")
+
     basins_by_id: dict = {}
     if _basins_geojson:
         for feat in _basins_geojson.get("features", []):
@@ -377,8 +407,7 @@ def classify_wards(rainfall_mm: float, water_level_m: float, area_filter: str = 
     for feat in _flood_zones_geojson.get("features", []):
         ward_name = feat["properties"].get("name", "")
 
-        if area_filter != "all" and ward_name != area_filter:
-            updated_features.append(feat)
+        if selected_ward is not None and ward_name != selected_ward:
             continue
 
         basin_refs = _basin_ward_mapping.get(ward_name, [])

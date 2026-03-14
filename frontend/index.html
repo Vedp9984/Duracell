@@ -182,10 +182,15 @@
                         </div>
                     </div>
 
-                    <!-- Run button -->
-                    <button class="sim-run-btn" id="sim-run-btn">
-                        <i class="fas fa-play"></i> Run Simulation
-                    </button>
+                    <!-- Run button & Auto toggle -->
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <button class="sim-run-btn" id="sim-run-btn" style="flex: 1;">
+                            <i class="fas fa-play"></i> Run Simulation
+                        </button>
+                        <label style="font-size: 12px; display: flex; align-items: center; gap: 5px; color: var(--text-primary); cursor: pointer;" title="Automatically run simulation when telemetry updates">
+                            <input type="checkbox" id="auto-sim-toggle" checked> Auto-Run
+                        </label>
+                    </div>
 
                     <!-- Results summary (hidden until simulation runs) -->
                     <div id="sim-results" class="sim-results" style="display:none;">

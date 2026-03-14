@@ -22,6 +22,8 @@ let charts = {};
 let featureCount = 0;
 let selectedSubbasin = null;
 let currentIntensity = 50;
+let autoSimInFlight = false;
+let lastAutoSimKey = null;
 
 // ========================================
 // Initialization
@@ -154,11 +156,11 @@ function getDefaultLayerConfig() {
                 id: 'risk', name: 'Flood Risk Zones', icon: 'exclamation-triangle', expanded: true,
                 layers: [
                     {
-                        id: 'risk_high', name: 'High Risk Zones', file: 'layers/flood_risk_high.geojson', type: 'polygon', visible: true,
+                        id: 'risk_high', name: 'High Risk Zones', file: 'layers/flood_risk_high.geojson', type: 'polygon', visible: false,
                         style: { color: '#e74c3c', weight: 2, fillColor: '#e74c3c', fillOpacity: 0.4 }, zIndex: 150
                     },
                     {
-                        id: 'risk_medium', name: 'Medium Risk Zones', file: 'layers/flood_risk_medium.geojson', type: 'polygon', visible: true,
+                        id: 'risk_medium', name: 'Medium Risk Zones', file: 'layers/flood_risk_medium.geojson', type: 'polygon', visible: false,
                         style: { color: '#f39c12', weight: 2, fillColor: '#f39c12', fillOpacity: 0.3 }, zIndex: 140
                     },
                     {
@@ -589,6 +591,8 @@ function updateLayerOpacity(layerId, opacity) {
 
 function buildLegend() {
     const container = document.getElementById('legend-content');
+    if (!container) return;
+    
     container.innerHTML = '';
 
     layerConfig.groups.forEach(group => {
@@ -609,6 +613,39 @@ function buildLegend() {
             container.appendChild(item);
         });
     });
+
+    // Dynamically add Simulation Legends if they exist on the map
+    if (Object.values(simLayers).some(layer => layer !== null)) {
+        const itemHeader = document.createElement('div');
+        itemHeader.style.marginTop = '10px';
+        itemHeader.style.fontWeight = 'bold';
+        itemHeader.style.fontSize = '11px';
+        itemHeader.style.color = 'var(--text-muted)';
+        itemHeader.textContent = 'SIMULATION RESULTS';
+        container.appendChild(itemHeader);
+
+        const simLegends = [
+            { id: 'tog-relief', label: 'Relief Camp', color: '#3498db' },
+            { id: 'tog-hospitals', label: 'Temp. Hospital', color: '#e74c3c' },
+            { id: 'tog-kitchens', label: 'Comm. Kitchen', color: '#e67e22' },
+            { id: 'tog-at-risk', label: 'At-Risk Building', color: '#e74c3c' },
+            { id: 'tog-safe', label: 'Safe Building', color: '#27ae60' },
+            { id: 'tog-risk-zones', label: 'Flood Risk Zone', color: 'linear-gradient(45deg, #27ae60, #f39c12, #e74c3c)' }
+        ];
+
+        simLegends.forEach(legend => {
+            const toggle = document.getElementById(legend.id);
+            if (toggle && toggle.checked) {
+                const item = document.createElement('div');
+                item.className = 'legend-item';
+                item.innerHTML = `
+                    <div class="legend-symbol ${legend.color.includes('gradient') ? 'raster' : 'point'}" style="background: ${legend.color}"></div>
+                    <span>${legend.label}</span>
+                `;
+                container.appendChild(item);
+            }
+        });
+    }
 }
 
 // ========================================
@@ -737,6 +774,46 @@ function updateMetrics(data) {
 
     // Update charts
     addChartData(data.latest_rainfall_mm || 0, data.latest_water_level_m || 0);
+
+    // --- AUTO SYNC LIVE TELEMETRY TO FLOOD SIMULATOR ---
+    const wl = data.latest_water_level_m || 0;
+    const rainfallSlider = document.getElementById('sim-rainfall');
+    const wlSlider = document.getElementById('sim-water-level');
+    const autoRunToggle = document.getElementById('auto-sim-toggle');
+    const areaSelect = document.getElementById('sim-area');
+
+    // Only force the sliders and simulation if 'Auto-Run' is checked
+    if (autoRunToggle && autoRunToggle.checked) {
+        if (rainfallSlider && wlSlider) {
+            rainfallSlider.value = rainfall.toFixed(1);
+            wlSlider.value = wl.toFixed(2);
+            rainfallSlider.dispatchEvent(new Event('input'));
+            wlSlider.dispatchEvent(new Event('input'));
+        }
+
+        const areaValue = areaSelect?.value || areaSelect?.options?.[0]?.value || '';
+        if (!areaValue) return;
+
+        const simKey = `${rainfall.toFixed(1)}|${wl.toFixed(2)}|${areaValue}`;
+        if (autoSimInFlight || simKey === lastAutoSimKey) return;
+
+        // Debounce the call to avoid spamming the backend
+        if (window.autoSimTimeout) clearTimeout(window.autoSimTimeout);
+        window.autoSimTimeout = setTimeout(async () => {
+            const runBtn = document.getElementById('sim-run-btn');
+            if (runBtn && !runBtn.disabled) {
+                autoSimInFlight = true;
+                try {
+                    await runFloodSimulation({ isAutoRun: true });
+                    lastAutoSimKey = simKey;
+                } catch (err) {
+                    console.error('Auto simulation failed:', err);
+                } finally {
+                    autoSimInFlight = false;
+                }
+            }
+        }, 1200);
+    }
 }
 
 function addChartData(rainfall, waterLevel) {
@@ -834,6 +911,10 @@ async function initFloodSimulation() {
                 opt.textContent = f.properties.name;
                 select.appendChild(opt);
             });
+
+            if (!select.value && select.options.length > 0) {
+                select.value = select.options[0].value;
+            }
         }
     } catch (e) { /* optional — ward list is nice-to-have */ }
 
@@ -868,15 +949,24 @@ async function initFloodSimulation() {
     document.getElementById('sim-clear-btn').addEventListener('click', clearSimulationLayers);
 }
 
-async function runFloodSimulation() {
+async function runFloodSimulation(options = {}) {
+    const isAutoRun = options.isAutoRun === true;
     const rainfall    = parseFloat(document.getElementById('sim-rainfall').value) || 0;
     const waterLevel  = parseFloat(document.getElementById('sim-water-level').value) || 0;
-    const area        = document.getElementById('sim-area').value;
+    const areaSelect  = document.getElementById('sim-area');
+    const area        = areaSelect.value || areaSelect.options?.[0]?.value || '';
+
+    if (!area) {
+        console.warn('No simulation area selected');
+        return;
+    }
 
     // Show loading
     document.getElementById('sim-loading').style.display = 'block';
-    document.getElementById('sim-results').style.display  = 'none';
-    document.getElementById('sim-run-btn').disabled       = true;
+    if (!isAutoRun) {
+        document.getElementById('sim-results').style.display  = 'none';
+        document.getElementById('sim-run-btn').disabled       = true;
+    }
 
     try {
         const resp = await fetch(`${CONFIG.API_URL}/simulate`, {
@@ -904,7 +994,9 @@ async function runFloodSimulation() {
         console.error('Simulation failed:', err);
     } finally {
         document.getElementById('sim-loading').style.display = 'none';
-        document.getElementById('sim-run-btn').disabled       = false;
+        if (!isAutoRun) {
+            document.getElementById('sim-run-btn').disabled = false;
+        }
     }
 }
 
@@ -1003,8 +1095,12 @@ function renderSimulationResults(data) {
                 if (!layer) return;
                 if (el.checked) map.addLayer(layer);
                 else            map.removeLayer(layer);
+                buildLegend(); // Update legend when toggled
             };
         });
+        
+        // Build legend initially when simulation results load
+        buildLegend();
     }
 }
 

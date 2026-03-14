@@ -125,7 +125,7 @@
           "name": "High Risk Zones",
           "file": "layers/flood_risk_high.geojson",
           "type": "polygon",
-          "visible": true,
+          "visible": false,
           "style": {
             "color": "#e74c3c",
             "weight": 2,
@@ -139,7 +139,7 @@
           "name": "Medium Risk Zones",
           "file": "layers/flood_risk_medium.geojson",
           "type": "polygon",
-          "visible": true,
+          "visible": false,
           "style": {
             "color": "#f39c12",
             "weight": 2,

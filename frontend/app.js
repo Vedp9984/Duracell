@@ -18,12 +18,21 @@ let layerConfig = null;
 let layers = {};
 let basemapLayers = {};
 let currentBasemap = null;
-let charts = {};
 let featureCount = 0;
 let selectedSubbasin = null;
 let currentIntensity = 50;
 let autoSimInFlight = false;
 let lastAutoSimKey = null;
+let statusRequestSeq = 0;
+let lastAppliedStatusSeq = 0;
+let alertsRequestSeq = 0;
+let lastAppliedAlertsSeq = 0;
+let manualSimHoldUntil = 0;
+let simulationDashboardMode = false;
+
+function enableManualSimHold(ms = 15000) {
+    manualSimHoldUntil = Date.now() + ms;
+}
 
 // ========================================
 // Initialization
@@ -34,7 +43,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     initDateTime();
     initMap();
-    initCharts();
 
     await loadLayerConfig();
     initBasemaps();
@@ -45,7 +53,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     initEventListeners();
     initWebSocket();
     startDataPolling();
-    initSimulationListeners();
     await initFloodSimulation();
 
     updateLayerCount();
@@ -316,23 +323,16 @@ function createLayer(geojson, config) {
     } else {
         return L.geoJSON(geojson, {
             style: (feature) => {
-                const isSelected = selectedSubbasin && selectedSubbasin.feature.properties.DN === feature.properties.DN;
                 return {
                     ...config.style,
-                    fillOpacity: isSelected ? 0.6 : (config.style.fillOpacity !== undefined ? config.style.fillOpacity : 0.5),
-                    color: isSelected ? '#ff0000' : config.style.color,
-                    weight: isSelected ? 4 : config.style.weight,
+                    fillOpacity: config.style.fillOpacity !== undefined ? config.style.fillOpacity : 0.5,
+                    color: config.style.color,
+                    weight: config.style.weight,
                     opacity: config.style.opacity !== undefined ? config.style.opacity : 1
                 };
             },
             onEachFeature: (feature, layer) => {
                 bindPopup(feature, layer);
-                if (config.id === 'subbasins') {
-                    layer.on('click', (e) => {
-                        L.DomEvent.stopPropagation(e);
-                        selectSubbasin(layer);
-                    });
-                }
             }
         });
     }
@@ -740,11 +740,20 @@ function startDataPolling() {
 }
 
 async function fetchCurrentStatus() {
+    const requestSeq = ++statusRequestSeq;
     try {
         const response = await fetch(`${CONFIG.API_URL}/current_status`);
         if (response.ok) {
             const data = await response.json();
+
+            // Ignore stale responses that arrive late.
+            if (requestSeq < lastAppliedStatusSeq) return;
+            lastAppliedStatusSeq = requestSeq;
+
             updateMetrics(data);
+            if (!simulationDashboardMode) {
+                fetchActiveAlerts(requestSeq);
+            }
         }
     } catch (error) {
         console.warn('Could not fetch status');
@@ -755,25 +764,19 @@ function updateMetrics(data) {
     const rainfall = data.latest_rainfall_mm || 0;
     currentIntensity = rainfall;
 
-    document.getElementById('rainfall-value').textContent = rainfall.toFixed(1);
-    document.getElementById('water-level-value').textContent = data.latest_water_level_m?.toFixed(2) || '0.00';
-    document.getElementById('discharge-value').textContent = data.latest_discharge_m3s?.toFixed(1) || '0.0';
-    document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+    if (!simulationDashboardMode) {
+        document.getElementById('rainfall-value').textContent = rainfall.toFixed(1);
+        document.getElementById('water-level-value').textContent = data.latest_water_level_m?.toFixed(2) || '0.00';
+        document.getElementById('discharge-value').textContent = data.latest_discharge_m3s?.toFixed(1) || '0.0';
+        document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
 
-    // Update simulation if a basin is selected
-    if (selectedSubbasin) {
-        updateSimulation();
+        // Update risk level
+        const risk = data.risk_level?.toLowerCase() || 'normal';
+        const riskCard = document.getElementById('risk-card');
+        riskCard.className = `status-card risk-card ${risk}`;
+        document.getElementById('risk-level').textContent = risk.toUpperCase();
+        document.getElementById('risk-message').textContent = data.status_message || 'System operational';
     }
-
-    // Update risk level
-    const risk = data.risk_level?.toLowerCase() || 'normal';
-    const riskCard = document.getElementById('risk-card');
-    riskCard.className = `status-card risk-card ${risk}`;
-    document.getElementById('risk-level').textContent = risk.toUpperCase();
-    document.getElementById('risk-message').textContent = data.status_message || 'System operational';
-
-    // Update charts
-    addChartData(data.latest_rainfall_mm || 0, data.latest_water_level_m || 0);
 
     // --- AUTO SYNC LIVE TELEMETRY TO FLOOD SIMULATOR ---
     const wl = data.latest_water_level_m || 0;
@@ -784,6 +787,8 @@ function updateMetrics(data) {
 
     // Only force the sliders and simulation if 'Auto-Run' is checked
     if (autoRunToggle && autoRunToggle.checked) {
+        if (Date.now() < manualSimHoldUntil) return;
+
         if (rainfallSlider && wlSlider) {
             rainfallSlider.value = rainfall.toFixed(1);
             wlSlider.value = wl.toFixed(2);
@@ -814,6 +819,166 @@ function updateMetrics(data) {
             }
         }, 1200);
     }
+}
+
+async function fetchActiveAlerts(parentStatusSeq = null) {
+    const requestSeq = ++alertsRequestSeq;
+    try {
+        const response = await fetch(`${CONFIG.API_URL}/alerts?active_only=true&limit=10`);
+        if (!response.ok) return;
+
+        const alerts = await response.json();
+
+        // If tied to a status request, ignore alerts from older status cycles.
+        if (parentStatusSeq !== null && parentStatusSeq < lastAppliedStatusSeq) return;
+
+        // Ignore stale alert responses that arrive late.
+        if (requestSeq < lastAppliedAlertsSeq) return;
+        lastAppliedAlertsSeq = requestSeq;
+
+        renderAlerts(alerts);
+    } catch (error) {
+        console.warn('Could not fetch alerts');
+    }
+}
+
+function escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function renderAlerts(alerts) {
+    const list = document.getElementById('alert-list');
+    const count = document.getElementById('alert-count');
+    if (!list || !count) return;
+
+    const activeAlerts = Array.isArray(alerts) ? alerts : [];
+    count.textContent = activeAlerts.length;
+
+    if (!activeAlerts.length) {
+        list.innerHTML = '<div class="no-alerts"><i class="fas fa-check-circle"></i><p>No active alerts</p></div>';
+        return;
+    }
+
+    list.innerHTML = activeAlerts.map(alert => {
+        const sev = (alert.severity || 'low').toLowerCase();
+        const time = alert.timestamp ? new Date(alert.timestamp).toLocaleTimeString() : '--';
+        return `
+            <div class="alert-item ${sev}">
+                <div class="alert-item-header">
+                    <span class="alert-severity">${escapeHtml(sev.toUpperCase())}</span>
+                    <span class="alert-time">${escapeHtml(time)}</span>
+                </div>
+                <div class="alert-message">${escapeHtml(alert.message || 'Alert')}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function computeSimRiskLevel(summary, riskZones) {
+    const features = riskZones?.features || [];
+    if (features.length === 1) {
+        return (features[0]?.properties?.risk_level || 'low').toLowerCase();
+    }
+
+    if ((summary?.wards_critical || 0) > 0) return 'critical';
+    if ((summary?.wards_high || 0) > 0) return 'high';
+    if ((summary?.wards_medium || 0) > 0) return 'medium';
+    return 'low';
+}
+
+function computeSimDischarge(area, riskZones) {
+    const features = riskZones?.features || [];
+    if (!features.length) return 0;
+
+    if (area === 'all') {
+        const values = features
+            .map(f => Number(f?.properties?.dynamic_discharge_m3s || 0))
+            .filter(v => Number.isFinite(v));
+        if (!values.length) return 0;
+        return values.reduce((a, b) => a + b, 0) / values.length;
+    }
+
+    return Number(features[0]?.properties?.dynamic_discharge_m3s || 0);
+}
+
+function severityRainfall(r) {
+    if (r > 150) return 'critical';
+    if (r > 100) return 'high';
+    if (r > 50) return 'medium';
+    return 'low';
+}
+
+function severityDischarge(q) {
+    if (q > 1000) return 'critical';
+    if (q > 500) return 'high';
+    if (q > 300) return 'medium';
+    return 'low';
+}
+
+function severityWaterLevel(w) {
+    if (w > 4.0) return 'critical';
+    if (w > 3.0) return 'high';
+    if (w > 2.5) return 'medium';
+    return 'low';
+}
+
+function buildSimulationAlerts(rainfall, discharge, waterLevel) {
+    const now = new Date().toISOString();
+    const alerts = [];
+
+    if (rainfall > 50) {
+        alerts.push({
+            severity: severityRainfall(rainfall),
+            message: `Simulated rainfall ${rainfall.toFixed(1)} mm/hr exceeds threshold 50 mm/hr`,
+            timestamp: now,
+        });
+    }
+    if (discharge > 200) {
+        alerts.push({
+            severity: severityDischarge(discharge),
+            message: `Simulated discharge ${discharge.toFixed(1)} m3/s exceeds threshold 200 m3/s`,
+            timestamp: now,
+        });
+    }
+    if (waterLevel > 2.5) {
+        alerts.push({
+            severity: severityWaterLevel(waterLevel),
+            message: `Simulated water level ${waterLevel.toFixed(2)} m exceeds danger mark 2.5 m`,
+            timestamp: now,
+        });
+    }
+
+    return alerts;
+}
+
+function applySimulationDashboard(data, rainfall, waterLevel, area) {
+    simulationDashboardMode = true;
+
+    const riskLevel = computeSimRiskLevel(data.summary, data.risk_zones);
+    const discharge = computeSimDischarge(area, data.risk_zones);
+
+    document.getElementById('rainfall-value').textContent = rainfall.toFixed(1);
+    document.getElementById('water-level-value').textContent = waterLevel.toFixed(2);
+    document.getElementById('discharge-value').textContent = discharge.toFixed(1);
+    document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+
+    const riskCard = document.getElementById('risk-card');
+    riskCard.className = `status-card risk-card ${riskLevel}`;
+    document.getElementById('risk-level').textContent = riskLevel.toUpperCase();
+
+    if (area === 'all') {
+        document.getElementById('risk-message').textContent = 'Simulated global view (all wards average discharge)';
+    } else {
+        document.getElementById('risk-message').textContent = `Simulated ward view: ${area}`;
+    }
+
+    const simAlerts = buildSimulationAlerts(rainfall, discharge, waterLevel);
+    renderAlerts(simAlerts);
 }
 
 function addChartData(rainfall, waterLevel) {
@@ -922,15 +1087,23 @@ async function initFloodSimulation() {
     const rainfallSlider = document.getElementById('sim-rainfall');
     const wlSlider       = document.getElementById('sim-water-level');
     rainfallSlider.addEventListener('input', () => {
+        enableManualSimHold();
         document.getElementById('rainfall-badge').textContent = `${rainfallSlider.value} mm/hr`;
     });
     wlSlider.addEventListener('input', () => {
+        enableManualSimHold();
         document.getElementById('wl-badge').textContent = `${parseFloat(wlSlider.value).toFixed(1)} m`;
     });
+
+    const areaSelect = document.getElementById('sim-area');
+    if (areaSelect) {
+        areaSelect.addEventListener('change', () => enableManualSimHold());
+    }
 
     // Preset buttons
     document.querySelectorAll('.preset-btn').forEach(btn => {
         btn.addEventListener('click', () => {
+            enableManualSimHold();
             const p = SIM_PRESETS[btn.dataset.preset];
             if (!p) return;
             rainfallSlider.value = p.rainfall_mm;
@@ -943,7 +1116,10 @@ async function initFloodSimulation() {
     });
 
     // Run button
-    document.getElementById('sim-run-btn').addEventListener('click', runFloodSimulation);
+    document.getElementById('sim-run-btn').addEventListener('click', () => {
+        enableManualSimHold();
+        runFloodSimulation();
+    });
 
     // Clear button
     document.getElementById('sim-clear-btn').addEventListener('click', clearSimulationLayers);
@@ -989,6 +1165,7 @@ async function runFloodSimulation(options = {}) {
 
         const data = await resp.json();
         renderSimulationResults(data);
+        applySimulationDashboard(data, rainfall, waterLevel, area);
 
     } catch (err) {
         console.error('Simulation failed:', err);
@@ -1232,4 +1409,8 @@ function clearSimulationLayers() {
         const el = document.getElementById(id); if (el) el.checked = true;
     });
     const safeTog = document.getElementById('tog-safe'); if (safeTog) safeTog.checked = false;
+
+    // Return dashboard to live sensor mode.
+    simulationDashboardMode = false;
+    fetchCurrentStatus();
 }

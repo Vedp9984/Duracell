@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Flood DAS - GHMC Zone 12 Monitoring</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
@@ -253,42 +252,10 @@
                 </div>
             </div>
 
-            <!-- Subbasin Analysis Panel (existing, kept below) -->
-            <div class="simulation-card">
-                <div class="card-header"><i class="fas fa-microscope"></i> SUBBASIN ANALYSIS</div>
-                <div class="card-body">
-                    <div id="simulation-results" class="simulation-results" style="display: none;">
-                        <div class="result-item">
-                            <span class="result-label">Basin:</span>
-                            <span class="result-value" id="selected-basin-id">-</span>
-                        </div>
-                        <div id="subbasin-details" class="subbasin-details">
-                            <!-- Populated dynamically via JS -->
-                        </div>
-                        <div class="result-item">
-                            <span class="result-label">Est. Peak Q:</span>
-                            <span class="result-value highlight" id="est-discharge-value">0.0 m³/s</span>
-                        </div>
-                        <div class="formula-hint">Q = C × i × A / 3.6 | Kirpich Tc</div>
-                    </div>
-                    <div id="no-selection-msg" class="no-selection-msg">
-                        <p><i class="fas fa-mouse-pointer"></i> Click a subbasin to simulate</p>
-                    </div>
-                </div>
-            </div>
-            
             <div class="alert-panel">
                 <div class="card-header"><i class="fas fa-bell"></i> ALERTS <span class="alert-badge" id="alert-count">0</span></div>
                 <div class="alert-list" id="alert-list">
                     <div class="no-alerts"><i class="fas fa-check-circle"></i><p>No active alerts</p></div>
-                </div>
-            </div>
-            
-            <div class="chart-panel">
-                <div class="card-header"><i class="fas fa-chart-line"></i> TRENDS</div>
-                <div class="mini-charts">
-                    <div class="mini-chart"><canvas id="rainfall-chart"></canvas><span class="chart-label">Rainfall</span></div>
-                    <div class="mini-chart"><canvas id="water-level-chart"></canvas><span class="chart-label">Water Level</span></div>
                 </div>
             </div>
         </aside>

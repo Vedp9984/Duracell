@@ -180,6 +180,75 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+def refresh_active_alerts(db: Session, managed_types: List[str], triggered_alerts: List[hydrology.AlertInfo]) -> None:
+    """
+    Keep active alerts in sync with latest conditions for the given alert types.
+
+    Strategy:
+    1. Resolve all currently active alerts in managed_types.
+    2. Insert the alerts that are currently triggered.
+    """
+    managed_set = set(managed_types or [])
+    triggered_by_type = {
+        a.alert_type: a
+        for a in triggered_alerts
+        if a.alert_type in managed_set
+    }
+
+    # Resolve alerts of managed types that are no longer triggered.
+    if managed_set:
+        stale_types = list(managed_set - set(triggered_by_type.keys()))
+        if stale_types:
+            db.query(Alert).filter(
+                Alert.is_active == 1,
+                Alert.alert_type.in_(stale_types)
+            ).update({Alert.is_active: 0}, synchronize_session=False)
+
+    # Upsert active alerts for currently triggered types.
+    for alert_type, alert_info in triggered_by_type.items():
+        existing = db.query(Alert).filter(
+            Alert.alert_type == alert_type,
+            Alert.is_active == 1
+        ).order_by(desc(Alert.timestamp)).first()
+
+        if existing:
+            existing.message = alert_info.message
+            existing.severity = alert_info.severity
+            existing.timestamp = datetime.now()
+        else:
+            db.add(Alert(
+                alert_type=alert_info.alert_type,
+                message=alert_info.message,
+                severity=alert_info.severity,
+                is_active=1,
+            ))
+
+    db.commit()
+
+
+def sync_active_alerts_from_latest(db: Session) -> None:
+    """Recompute active alerts from latest sensor/discharge values."""
+    latest_rainfall = db.query(Rainfall).order_by(desc(Rainfall.timestamp)).first()
+    latest_water = db.query(WaterLevel).order_by(desc(WaterLevel.timestamp)).first()
+    latest_discharge = db.query(DischargeEstimate).order_by(desc(DischargeEstimate.timestamp)).first()
+
+    rainfall_mm = latest_rainfall.rainfall_mm if latest_rainfall else None
+    water_level_m = latest_water.level_m if latest_water else None
+    discharge_m3s = latest_discharge.computed_discharge_m3s if latest_discharge else None
+
+    triggered = hydrology.check_thresholds(
+        rainfall_mm_hr=rainfall_mm,
+        discharge_m3s=discharge_m3s,
+        water_level_m=water_level_m,
+    )
+
+    refresh_active_alerts(
+        db,
+        managed_types=["Heavy Rainfall Alert", "Flood Risk Alert", "Critical Stage Alert"],
+        triggered_alerts=triggered,
+    )
+
+
 # ============================================================================
 # STARTUP & SHUTDOWN EVENTS
 # ============================================================================
@@ -284,14 +353,11 @@ async def add_rainfall(data: RainfallCreate, db: Session = Depends(get_db)):
         discharge_m3s=discharge
     )
     
-    for alert_info in alerts:
-        alert = Alert(
-            alert_type=alert_info.alert_type,
-            message=alert_info.message,
-            severity=alert_info.severity
-        )
-        db.add(alert)
-    db.commit()
+    refresh_active_alerts(
+        db,
+        managed_types=["Heavy Rainfall Alert", "Flood Risk Alert"],
+        triggered_alerts=alerts
+    )
     
     # Broadcast update via WebSocket
     await manager.broadcast({
@@ -378,14 +444,11 @@ async def add_water_level(data: WaterLevelCreate, db: Session = Depends(get_db))
     # Check water level threshold
     alerts = hydrology.check_thresholds(water_level_m=data.level_m)
     
-    for alert_info in alerts:
-        alert = Alert(
-            alert_type=alert_info.alert_type,
-            message=alert_info.message,
-            severity=alert_info.severity
-        )
-        db.add(alert)
-    db.commit()
+    refresh_active_alerts(
+        db,
+        managed_types=["Critical Stage Alert"],
+        triggered_alerts=alerts
+    )
     
     # Broadcast update via WebSocket
     await manager.broadcast({
@@ -499,6 +562,8 @@ async def get_alerts(
     db: Session = Depends(get_db)
 ):
     """Get flood alerts with optional filtering"""
+    sync_active_alerts_from_latest(db)
+
     query = db.query(Alert).order_by(desc(Alert.timestamp))
     
     if active_only:
@@ -527,6 +592,8 @@ async def resolve_alert(alert_id: int, db: Session = Depends(get_db)):
 @app.get("/alerts/count", tags=["Alerts"])
 async def get_alerts_count(db: Session = Depends(get_db)):
     """Get count of active alerts by severity"""
+    sync_active_alerts_from_latest(db)
+
     counts = {
         "total": db.query(Alert).filter(Alert.is_active == 1).count(),
         "critical": db.query(Alert).filter(Alert.is_active == 1, Alert.severity == "critical").count(),
@@ -561,6 +628,9 @@ async def get_current_status(db: Session = Depends(get_db)):
     latest_discharge = db.query(DischargeEstimate).order_by(desc(DischargeEstimate.timestamp)).first()
     discharge_m3s = latest_discharge.computed_discharge_m3s if latest_discharge else 0.0
     
+    # Re-sync active alerts to latest values and then count.
+    sync_active_alerts_from_latest(db)
+
     # Get active alerts count
     active_alerts = db.query(Alert).filter(Alert.is_active == 1).count()
     

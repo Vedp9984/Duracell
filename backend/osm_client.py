@@ -271,6 +271,8 @@ def _ward_polygon_shapes(risk_zones_geojson: dict) -> list:
                 "name": props.get("name", ""),
                 "risk_level": props.get("risk_level", "low"),
                 "flood_depth_m": props.get("flood_depth_potential_m", 0.5) or 0.5,
+                "simulation_rainfall_mm": props.get("simulation_rainfall_mm"),
+                "simulation_water_level_m": props.get("simulation_water_level_m"),
                 "geom": geom,
                 "geometry": feat.get("geometry"),
                 "centroid_lat": props.get("_centroid_lat"),
@@ -427,12 +429,34 @@ def classify_buildings(buildings: list, risk_zones_geojson: dict) -> list:
 
         classified.append(b)
 
-    # Risk-severity fractions: keep a realistic vulnerable subset instead of 0% or 100%.
-    risk_fraction = {
-        "critical": 0.70,
-        "high": 0.45,
-        "medium": 0.20,
-    }
+    # Risk-severity fractions: keep a realistic vulnerable subset in normal/moderate runs,
+    # but become strict under extreme rainfall/water-level conditions.
+    rain_values = [w.get("simulation_rainfall_mm") for w in ward_shapes if w.get("simulation_rainfall_mm") is not None]
+    wl_values = [w.get("simulation_water_level_m") for w in ward_shapes if w.get("simulation_water_level_m") is not None]
+    sim_rain = max(rain_values) if rain_values else 0.0
+    sim_wl = max(wl_values) if wl_values else 0.0
+
+    if sim_rain >= 120 or sim_wl >= 3.0:
+        # Extreme event: nearly all medium/high and all critical assets become at-risk.
+        risk_fraction = {
+            "critical": 1.00,
+            "high": 1.00,
+            "medium": 0.85,
+        }
+    elif sim_rain >= 80 or sim_wl >= 2.3:
+        # Heavy event
+        risk_fraction = {
+            "critical": 0.95,
+            "high": 0.80,
+            "medium": 0.45,
+        }
+    else:
+        # Normal/moderate event
+        risk_fraction = {
+            "critical": 0.70,
+            "high": 0.45,
+            "medium": 0.20,
+        }
 
     for risk_level, frac in risk_fraction.items():
         candidates = [b for b in classified if b.get("ward_risk_level") == risk_level]

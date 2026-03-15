@@ -1,8 +1,8 @@
-# Flood DAS: Urban Flood Monitoring and Response Planning
+#  Urban Flood Monitoring and Response Planning
 
 ## 1. System Purpose
 
-Flood DAS is a geospatial decision-support system for urban flood monitoring, dynamic risk visualization, and emergency facility planning.
+It is a geospatial decision-support system for urban flood monitoring, dynamic risk visualization, and emergency facility planning.
 
 The system combines:
 

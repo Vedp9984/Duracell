@@ -1,292 +1,295 @@
+# Flood DAS: Urban Flood Monitoring and Response Planning
 
+## 1. System Purpose
 
-**Smart City Urban Flood Monitoring System for Kukatpally Nala Sub-Catchment, Hyderabad**
+Flood DAS is a geospatial decision-support system for urban flood monitoring, dynamic risk visualization, and emergency facility planning.
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
-![Python](https://img.shields.io/badge/python-3.9+-green)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.109-teal)
-![PostGIS](https://img.shields.io/badge/PostGIS-enabled-orange)
+The system combines:
 
----
+- Real-time telemetry ingestion (rainfall and water level)
+- Hydrologic thresholding and alerting
+- Dynamic flood risk classification by ward
+- Building exposure classification (at-risk vs safe)
+- Facility optimization for relief camps, temporary hospitals, and community kitchens
+- Interactive simulation workflows for planning and demonstration
 
-## 📋 Overview
+The current implementation is configured for GHMC Zone 12 (Hyderabad) and can be adapted to other urban catchments with equivalent geospatial inputs.
 
-This project implements a semi-realistic **Flood Data Acquisition System (DAS)** for urban flood monitoring. It demonstrates integration of:
+## 2. What the System Does
 
-- **Hydrological computation** using the Rational Method
-- **Spatial database** with PostgreSQL + PostGIS
-- **Real-time sensor data** simulation
-- **Web GIS dashboard** with Leaflet.js
-- **Automated alert generation**
+At a high level, Flood DAS performs the following pipeline:
 
-### Target Catchment: Kukatpally Nala Sub-Catchment
+1. Collects or simulates rainfall and water-level observations.
+2. Computes discharge and threshold violations.
+3. Produces active alerts with severity levels.
+4. Reclassifies wards into dynamic flood-risk categories.
+5. Classifies buildings as at-risk or safe.
+6. Optimizes emergency facility placement for affected populations.
+7. Renders all outputs in a map-centric operational dashboard.
 
-| Parameter | Value |
-|-----------|-------|
-| Area | 167 km² |
-| Runoff Coefficient | 0.9 |
-| Land Use | Urban/Mixed |
-| Reference Event | 13 October 2020 Hyderabad Flood |
+## 3. Technical Architecture
 
----
+### 3.1 Backend
 
-## 🏗 System Architecture
+- Framework: FastAPI
+- ORM: SQLAlchemy
+- Database: SQLite by default (`flood_das.db`), with optional PostgreSQL/PostGIS support
+- Key modules:
+	- `backend/main.py`: API routes and orchestration
+	- `backend/hydrology.py`: discharge and threshold logic
+	- `backend/risk_classification.py`: dynamic ward risk computation
+	- `backend/osm_client.py`: OSM building fetch/classification
+	- `backend/facility_optimization.py`: emergency facility optimization
+	- `backend/simulator.py`: telemetry simulator
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     FLOOD DAS ARCHITECTURE                       │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│   ┌───────────┐     ┌───────────────┐     ┌─────────────────┐   │
-│   │  Sensor   │────▶│   FastAPI     │────▶│   PostgreSQL    │   │
-│   │ Simulator │     │   Backend     │     │   + PostGIS     │   │
-│   └───────────┘     └───────────────┘     └─────────────────┘   │
-│                            │                       │            │
-│                            │                       │            │
-│                            ▼                       │            │
-│                    ┌───────────────┐               │            │
-│                    │  Hydrology    │               │            │
-│                    │  Engine       │               │            │
-│                    │ (Rational     │               │            │
-│                    │  Method)      │               │            │
-│                    └───────────────┘               │            │
-│                            │                       │            │
-│                            ▼                       │            │
-│                    ┌───────────────┐               │            │
-│                    │    Alert      │               │            │
-│                    │   System      │               │            │
-│                    └───────────────┘               │            │
-│                            │                       │            │
-│                            ▼                       ▼            │
-│                    ┌─────────────────────────────────┐          │
-│                    │      Web GIS Dashboard          │          │
-│                    │  (Leaflet + Chart.js)          │          │
-│                    └─────────────────────────────────┘          │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
+### 3.2 Frontend
 
----
+- Plain JavaScript, Leaflet-based GIS map UI
+- Layered geospatial visualization with simulation controls
+- Supports:
+	- Manual scenario simulation
+	- Auto-run simulation from live telemetry
+	- Dynamic alerts panel
+	- Layer toggles for risk zones, buildings, and facilities
 
-## 📂 Project Structure
+### 3.3 Data Storage
 
-```
-flood_das/
-│
-├── backend/
-│   ├── __init__.py         # Package initialization
-│   ├── main.py             # FastAPI application & endpoints
-│   ├── models.py           # SQLAlchemy database models
-│   ├── database.py         # Database configuration
-│   ├── hydrology.py        # Rational Method computations
-│   └── simulator.py        # Sensor data simulation engine
-│
-├── frontend/
-│   ├── index.html          # Dashboard HTML
-│   ├── styles.css          # Dashboard styling
-│   └── app.js              # Dashboard JavaScript
-│
-├── geojson/
-│   ├── watershed.geojson   # Catchment boundary
-│   ├── streams.geojson     # Stream network
-│   ├── flood_zones.geojson # Flood risk zones
-│   └── sensors.geojson     # Sensor locations
-│
-├── requirements.txt        # Python dependencies
-└── README.md              # This file
-```
+Runtime tables include rainfall, water levels, discharge estimates, alerts, and simulation results.
 
----
+Important file:
 
-### Core Components
-- **Spatial Processing (`extract_gpkg.py`, `create_layers.py`, `process_basins.py`)**: Python utilities that process raw QGIS `.gpkg` and shapefiles. They strip 3D geometries, apply CRS transformations (to `EPSG:4326`), enrich them with historical flood data/characteristics, and output static `.geojson` layer structures into the `geojson/` folder.
-- **Backend API (`backend/main.py`)**: A FastAPI application providing REST endpoints for real-time sensor metrics injection and fetching. Calculates discharge thresholds via the Rational Method. Provides a WebSocket (`/ws`) implementation that pushes live data and alerts to connected UI clients.
-- **Simulation Engine (`backend/simulator.py`)**: Background script to iteratively ping the REST endpoints with faked precipitation / water stage events to load-test the application and trigger threshold alerts on the UI.
-- **Frontend SPA (`create_frontend.py`, `frontend/`)**: Generates an HTML/JS/CSS single-page application wrapping `Leaflet.js` and `Chart.js`. The UI pulls generated GeoJSONs locally, plots risk maps and hydrological matrices on a canvas, listens to the WebSocket for live events, and renders notifications.
+- `flood_das.db`: local operational state database for development/demo
 
-### Data Storage
-The backend uses SQLAlchemy. While built for PostGIS, the default configuration falls back directly to an embedded SQLite database (`flood_das.db`) storing sensor telemetry, discharge estimates, alerts, and feature geometries as generic WKT format text.
+## 4. Data Used
 
----
+### 4.1 Geospatial Base Data
 
-## 🚀 How to Run locally
+From the `geojson/` and `geojson/layers/` folders:
 
-### Prerequisites
-- Python 3.9+
+- Watershed boundary
+- Ward boundaries
+- Drainage network by stream order
+- Flood-zone polygons
+- Sensor and gauge locations
 
-### 1. Clone and Setup Environment
+### 4.2 Dynamic/External Data
+
+- OSM buildings, fetched and cached (`geojson/cache/osm_buildings.geojson`)
+- Live or simulated telemetry data through backend endpoints
+
+### 4.3 Derived Data
+
+Generated at runtime:
+
+- Dynamic ward risk levels and scores
+- Building exposure classes
+- Recommended emergency facility locations
+- Active alert states
+
+## 5. Feature Reference
+
+### 5.1 Real-Time Status Dashboard
+
+Displays rainfall, water level, discharge, risk level, and status message.
+
+In simulation mode, the dashboard reflects simulation context:
+
+- `All Zone 12`: global simulated aggregates
+- specific ward selected: ward-specific simulated values
+
+### 5.2 Alerts Engine
+
+Alert types include:
+
+- Heavy Rainfall Alert
+- Flood Risk Alert
+- Critical Stage Alert
+
+The system maintains active alerts from current conditions and resolves alerts when thresholds are no longer exceeded.
+
+### 5.3 Dynamic Flood Simulation
+
+Inputs:
+
+- Rainfall intensity
+- Water level
+- Area filter (all zones or a selected ward)
+
+Outputs:
+
+- Dynamic risk zones
+- At-risk and safe buildings
+- Recommended emergency facilities
+- Summary statistics
+
+### 5.4 Area-Scoped Simulation Behavior
+
+- `all`: full-zone simulation output across all wards
+- specific ward: simulation output constrained to the selected ward context
+
+### 5.5 Building Exposure Classification
+
+Buildings are classified into:
+
+- At-risk buildings
+- Safe buildings
+
+Classification uses risk severity and vulnerability logic designed for operational interpretability in urban flood scenarios.
+
+### 5.6 Facility Optimization
+
+Recommends:
+
+- Relief camps
+- Temporary hospitals
+- Community kitchens
+
+Optimization runs against safe candidate sites and current risk/population context.
+
+### 5.7 Auto-Run Mode
+
+When enabled in the UI:
+
+- latest telemetry values are fed into simulation repeatedly
+- map layers and simulation results update continuously
+
+Auto-run does not generate telemetry itself. It uses backend telemetry input (real or simulated).
+
+## 6. Running the System
+
+## 6.1 Prerequisites
+
+- Python 3.10+
+- Linux/macOS/Windows shell
+
+## 6.2 Install Dependencies
 
 ```bash
-git clone <repository_url>
-cd flood_das
-
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Start the Backend API
-
-The system automatically initializes an SQLite database fallback out-of-the-box (`flood_das.db`).
+## 6.3 Start Backend API
 
 ```bash
 source .venv/bin/activate
 uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
-- API Docs: `http://localhost:8000/docs`
-- UI Dashboard: **Automatically served at `http://localhost:8000`**
 
-### 3. Run Sensor Simulation (Separate Terminal)
+API and dashboard endpoints:
 
-To load-test the application and see the dashboard react, we use a simulation script. This script acts as virtual weather/water sensors, programmatically firing HTTP POST requests via the `aiohttp` library to the Backend's `/add_rainfall` and `/add_water_level` endpoints.
+- API root/docs: `http://127.0.0.1:8000/docs`
+- Frontend UI: `http://127.0.0.1:8000/frontend/index.html`
 
-This simulates:
-1. **Rainfall Events**: Ramping up rainfall intensity (mm/hr) in synthetic rain gauges. 
-2. **Rising Water Levels**: Simulating Nala stream stages rising linearly or exponentially depending on the profile.
-3. **Triggering the Rules Engine**: Driving the hydrological equations (Rational Method) past safe thresholds to automatically trigger WebSockets Alerts, which the UI receives and turns into red "Critical Risk" visual warnings.
+## 6.4 Start Backend Simulator
+
+Run this in a second terminal while backend is running.
+
+Default heavy pattern:
 
 ```bash
 source .venv/bin/activate
-# Standard run (gradual rain buildup)
-python -m backend.simulator
-# Extreme storm burst scenario (fast flash flood simulation)
-python -m backend.simulator --pattern extreme --duration 15
+python backend/simulator.py --api-url http://127.0.0.1:8000
 ```
 
-## 💧 Hydrological Logic
-
-### Rational Method
-
-The system uses the **Rational Method** for peak discharge estimation:
-
-```
-Q = C × i × A
-```
-
-Where:
-- **Q** = Peak discharge (m³/s)
-- **C** = Runoff coefficient (0.9 for highly urbanized catchment)
-- **i** = Rainfall intensity (m/s)
-- **A** = Catchment area (167 × 10⁶ m²)
-
-### Threshold Alert Logic
-
-| Condition | Alert Type | Severity |
-|-----------|------------|----------|
-| Rainfall > 50 mm/hr | Heavy Rainfall Alert | Medium-Critical |
-| Discharge > 300 m³/s | Flood Risk Alert | Medium-Critical |
-| Water Level > 2.5 m | Critical Stage Alert | Medium-Critical |
-
----
-
-## 🌐 API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | System information |
-| GET | `/catchment_info` | Catchment parameters |
-| POST | `/add_rainfall` | Add rainfall data |
-| POST | `/add_water_level` | Add water level data |
-| GET | `/current_status` | Current system status |
-| GET | `/alerts` | Active alerts |
-| GET | `/discharge` | Discharge estimates |
-| GET | `/geojson/{layer}` | GeoJSON layers |
-| WS | `/ws` | WebSocket for real-time updates |
-
-Full API documentation available at `/docs` when server is running.
-
----
-
-## 🗺️ GIS Layers
-
-The dashboard displays the following spatial layers:
-
-1. **Watershed Boundary** - Kukatpally Nala catchment extent
-2. **Stream Network** - Main channel and tributaries
-3. **Flood Risk Zones** - High/Medium/Low risk areas
-4. **Sensor Locations** - Rain gauges and water level sensors
-
-Layers can be toggled using the map control buttons.
-
----
-
-## 📊 Dashboard Features
-
-- **Real-time map** with GIS overlay
-- **Live metrics** display (rainfall, water level, discharge)
-- **Risk level indicator** with color coding
-- **Alert panel** with severity classification
-- **Time-series charts** for trend visualization
-- **WebSocket** support for instant updates
-
----
-
-## 🔧 Configuration
-
-### Environment Variables
+Extreme scenario:
 
 ```bash
-# Database URL
-DATABASE_URL=postgresql://user:pass@localhost:5432/flood_das
-
-# API Port
-PORT=8000
+python backend/simulator.py --pattern extreme --duration 30 --interval 10 --api-url http://127.0.0.1:8000
 ```
 
-### Threshold Configuration
-
-Edit `backend/hydrology.py` to adjust thresholds:
-
-```python
-RAINFALL_THRESHOLD_MM_HR = 50    # mm/hr
-DISCHARGE_THRESHOLD_M3S = 300   # m³/s
-WATER_LEVEL_THRESHOLD_M = 2.5   # meters
-```
-
----
-
-## 🧪 Testing the System
-
-### 1. Basic API Test
+Single extreme event trigger:
 
 ```bash
-curl http://localhost:8000/current_status
+python backend/simulator.py --extreme --api-url http://127.0.0.1:8000
 ```
 
-### 2. Add Rainfall Data
+Notes:
 
-```bash
-curl -X POST "http://localhost:8000/add_rainfall" \
-  -H "Content-Type: application/json" \
-  -d '{"station_name": "Test_Station", "rainfall_mm": 75.5, "latitude": 17.49, "longitude": 78.40}'
+- Use `127.0.0.1` or `localhost` for simulator client calls.
+- `0.0.0.0` is a server bind address; client requests should target loopback host.
+
+## 6.5 Frontend Simulation Workflow
+
+1. Open dashboard in browser.
+2. Set area (`all` or specific ward).
+3. Set rainfall and water-level inputs, or choose a preset.
+4. Click `Run Simulation`.
+5. Optionally enable `Auto-Run` for continuous updates from telemetry.
+
+## 7. Key API Endpoints
+
+Telemetry ingestion:
+
+- `POST /add_rainfall`
+- `POST /add_water_level`
+
+Operational status:
+
+- `GET /current_status`
+- `GET /alerts`
+- `GET /alerts/count`
+
+Simulation:
+
+- `POST /simulate`
+- `GET /dynamic_risk_zones`
+- `GET /osm_buildings`
+
+History:
+
+- `GET /history`
+
+## 8. Database and Reset Behavior
+
+`flood_das.db` stores all runtime state.
+
+If deleted:
+
+- historical readings and alerts are removed
+- simulation history is removed
+- tables are recreated on backend restart
+
+Reset steps:
+
+1. Stop backend.
+2. Remove or rename `flood_das.db`.
+3. Restart backend.
+
+## 9. How the Backend Simulator Works
+
+The simulator is pattern-driven with controlled stochastic variation.
+
+It is not purely random.
+
+- Rainfall follows scenario profiles (normal, moderate, heavy, extreme)
+- noise and station-level variation are applied for realism
+- water-level response uses lagged rainfall history (upstream/middle/downstream behavior)
+
+This design produces plausible temporal dynamics suitable for dashboard and planning demonstrations.
+
+## 10. Project Structure
+
+```text
+backend/
+	main.py
+	hydrology.py
+	risk_classification.py
+	osm_client.py
+	facility_optimization.py
+	simulator.py
+	models.py
+	database.py
+
+frontend/
+	index.html
+	app.js
+	styles.css
+
+geojson/
+	layer_config.json
+	flood_zones.geojson
+	layers/
+	cache/
 ```
-
-### 3. Trigger Alerts
-
-```bash
-# Simulate extreme rainfall
-python -m backend.simulator --extreme
-```
-
----
-
-## 📚 References
-
-- **Rational Method**: Urban Hydrology for Small Watersheds (TR-55), USDA-NRCS
-- **October 2020 Event**: Hyderabad recorded ~200mm rainfall in 6 hours
-- **PostGIS**: https://postgis.net/
-- **Leaflet.js**: https://leafletjs.com/
-- **Chart.js**: https://www.chartjs.org/
-
----
-
-## 👨‍💻 Author
-Team 4 - Hydrological Informatics Project
-
----
-
-## 🙏 Acknowledgments
-
-- India Meteorological Department (IMD) for rainfall data references
-- Greater Hyderabad Municipal Corporation (GHMC) for urban drainage insights
-- OpenStreetMap contributors for basemap data

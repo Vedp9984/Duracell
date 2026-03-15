@@ -22,9 +22,38 @@ from datetime import datetime, timedelta
 from typing import List, Tuple
 import argparse
 import sys
+from urllib.parse import urlparse
 
 # API Configuration
 API_BASE_URL = "http://localhost:8000"
+
+
+def normalize_api_url(api_url: str) -> str:
+    """Normalize API URL for client usage.
+
+    Notes:
+    - `0.0.0.0` is a bind address for servers, not a routable client target.
+      We map it to `127.0.0.1` for local simulation clients.
+    - Accepts values with or without scheme.
+    """
+    raw = (api_url or "").strip()
+    if not raw:
+        return API_BASE_URL
+
+    if "://" not in raw:
+        raw = f"http://{raw}"
+
+    parsed = urlparse(raw)
+    host = parsed.hostname or "localhost"
+    if host == "0.0.0.0":
+        host = "127.0.0.1"
+
+    scheme = parsed.scheme or "http"
+    netloc = host
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+
+    return f"{scheme}://{netloc}"
 
 # ============================================================================
 # SENSOR CONFIGURATION
@@ -268,7 +297,7 @@ async def run_simulation(
         api_url: API base URL
     """
     global API_BASE_URL
-    API_BASE_URL = api_url
+    API_BASE_URL = normalize_api_url(api_url)
     
     total_steps = (duration_minutes * 60) // interval_seconds
     water_sim = WaterLevelSimulator()
@@ -279,7 +308,7 @@ async def run_simulation(
     print(f"Pattern: {pattern.upper()}")
     print(f"Duration: {duration_minutes} minutes")
     print(f"Interval: {interval_seconds} seconds")
-    print(f"API URL: {api_url}")
+    print(f"API URL: {API_BASE_URL}")
     print(f"Rain Gauges: {len(RAIN_GAUGE_STATIONS)}")
     print(f"Stage Monitors: {len(WATER_LEVEL_STATIONS)}")
     print("=" * 70)
@@ -332,13 +361,16 @@ async def run_simulation(
     print("=" * 70)
 
 
-async def run_single_extreme_event():
+async def run_single_extreme_event(api_url: str = API_BASE_URL):
     """
     Simulate a single extreme rainfall event.
     Useful for quick demonstration of alert system.
     """
     print("\n⚡ SIMULATING EXTREME RAINFALL EVENT")
     print("=" * 50)
+
+    global API_BASE_URL
+    API_BASE_URL = normalize_api_url(api_url)
     
     async with aiohttp.ClientSession() as session:
         # Submit single extreme rainfall reading
@@ -442,7 +474,7 @@ Examples:
     args = parser.parse_args()
     
     if args.extreme:
-        asyncio.run(run_single_extreme_event())
+        asyncio.run(run_single_extreme_event(api_url=args.api_url))
     else:
         asyncio.run(run_simulation(
             pattern=args.pattern,

@@ -257,7 +257,53 @@ Reset steps:
 2. Remove or rename `flood_das.db`.
 3. Restart backend.
 
-## 9. How the Backend Simulator Works
+## 9. Reproducibility Instructions
+
+Use the steps below to reproduce the same workflow reliably across machines.
+
+### 9.1 Environment Freeze
+
+Use Python 3.10+ and install the pinned dependency versions from `requirements.txt`:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 9.2 Clean-State Run
+
+To avoid previous telemetry/history affecting results, reset the local database before each run:
+
+```bash
+rm -f flood_das.db
+```
+
+Then start the API:
+
+```bash
+uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
+
+### 9.3 Fixed Scenario Commands
+
+In a second terminal (with the same virtual environment), run a fixed simulator scenario:
+
+```bash
+python backend/simulator.py --pattern extreme --duration 30 --interval 10 --api-url http://127.0.0.1:8000
+```
+
+Use the same command, duration, interval, area selection, and UI actions for each run.
+
+### 9.4 What Is Deterministic vs Variable
+
+- Deterministic: code version, dependency versions, API endpoints, and scenario parameters.
+- Variable: simulator includes stochastic noise by design, so exact telemetry values can differ slightly run-to-run.
+
+For publication-grade reproducibility, store one run's API outputs (for example `GET /history` and `GET /dynamic_risk_zones`) as fixed reference artifacts and compare future runs against those baselines.
+
+## 10. How the Backend Simulator Works
 
 The simulator is pattern-driven with controlled stochastic variation.
 
@@ -269,7 +315,7 @@ It is not purely random.
 
 This design produces plausible temporal dynamics suitable for dashboard and planning demonstrations.
 
-## 10. Project Structure
+## 11. Project Structure
 
 ```text
 backend/
